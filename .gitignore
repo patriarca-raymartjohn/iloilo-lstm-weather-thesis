@@ -1,0 +1,37 @@
+# Secrets
+.env
+
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Old RAG database (no longer used)
+chroma_db/
+
+# Weather API cache
+.cache.sqlite
+
+# Old/unused model files (keep only the one app.py loads)
+LSTM_Weather_Forcast_Model 10-26-2025.h5
+LSTM_Weather_Forcast_Model_Test-11-26-2025-v2.h5
+LSTM_Weather_Forcast_Model_Test_11-26-2025.h5
+LSTM_Weather_Forcast_Model_new1.h5
+LSTM_Weather_Forcast_Model_new2 (1).h5
+LSTM_Weather_Forcast_Model_v2.h5
+Model_2.h5
+Model_8.h5
+initial_model.h5
+
+# Old/unused scaler files (keep only the one app.py loads)
+iloilo_weather_scaler (1)_11-26-2025-v2.pkl
+iloilo_weather_scaler (1)_11-26-2025.pkl
+iloilo_weather_scaler.pkl
+iloilo_weather_scaler.save
+
+# Scratch/test files
+call.txt
+call_sample.py
+app_versions/

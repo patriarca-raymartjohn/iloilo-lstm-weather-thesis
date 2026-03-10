@@ -1,0 +1,1876 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>Iloilo Weather - LSTM Dashboard</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+        rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
+        rel="stylesheet" />
+    <script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#137fec",
+                        "background-light": "#f6f7f8",
+                        "background-dark": "#101922",
+                    },
+                    fontFamily: {
+                        "display": ["Inter"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.5rem",
+                        "lg": "1rem",
+                        "xl": "1.5rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            transition: background-color 0.4s ease, color 0.4s ease;
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: background 0.4s ease, border-color 0.4s ease, box-shadow 0.3s ease, transform 0.25s ease;
+        }
+
+        .chart-glow {
+            filter: drop-shadow(0 0 8px rgba(19, 127, 236, 0.4));
+        }
+
+        .search-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-top: none;
+            border-radius: 0 0 0.75rem 0.75rem;
+            max-height: 300px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+        }
+
+        .search-result-item {
+            padding: 10px 14px;
+            border-bottom: 1px solid #334155;
+            cursor: pointer;
+        }
+
+        .search-result-item:hover {
+            background-color: #334155;
+        }
+
+        .search-result-item:last-child {
+            border-bottom: none;
+        }
+
+        .search-result-item.no-results {
+            color: #94a3b8;
+            cursor: default;
+        }
+
+        .result-name {
+            font-weight: 600;
+            font-size: 14px;
+            color: #e2e8f0;
+            margin-bottom: 2px;
+        }
+
+        .result-details {
+            font-size: 11px;
+            color: #94a3b8;
+        }
+
+        .result-admin {
+            font-size: 10px;
+            color: #64748b;
+            font-style: italic;
+        }
+
+        /* Hover Animations */
+        .forecast-card-hover {
+            transition: transform 0.25s ease-in-out, box-shadow 0.25s ease-in-out;
+        }
+
+        .forecast-card-hover:hover {
+            transform: scale(1.03);
+            box-shadow: 0 8px 30px rgba(19, 127, 236, 0.15);
+        }
+
+        .advisor-card-hover {
+            transition: transform 0.25s ease-in-out, box-shadow 0.25s ease-in-out;
+        }
+
+        .advisor-card-hover:hover {
+            transform: translateY(-4px) scale(1.02);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+        }
+
+        .nav-btn-hover {
+            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out, background-color 0.2s ease;
+        }
+
+        .nav-btn-hover:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(19, 127, 236, 0.2);
+        }
+
+        /* Dark/Light Toggle Switch */
+        .theme-toggle {
+            position: relative;
+            width: 48px;
+            height: 26px;
+            cursor: pointer;
+        }
+
+        .theme-toggle input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            inset: 0;
+            background: #334155;
+            border-radius: 9999px;
+            transition: background 0.3s ease;
+        }
+
+        .toggle-slider::before {
+            content: '';
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            left: 3px;
+            top: 3px;
+            background: #f1f5f9;
+            border-radius: 50%;
+            transition: transform 0.3s ease;
+        }
+
+        .theme-toggle input:checked+.toggle-slider {
+            background: #137fec;
+        }
+
+        .theme-toggle input:checked+.toggle-slider::before {
+            transform: translateX(22px);
+        }
+
+        /* Light Mode Overrides */
+        html.light body {
+            background-color: #f0f4f8 !important;
+            color: #1e293b !important;
+        }
+
+        html.light .glass-card {
+            background: rgba(255, 255, 255, 0.7) !important;
+            border-color: rgba(0, 0, 0, 0.08) !important;
+        }
+
+        html.light header.glass-card {
+            background: rgba(255, 255, 255, 0.85) !important;
+        }
+
+        html.light .bg-slate-800,
+        html.light .bg-slate-800\/50 {
+            background-color: #e2e8f0 !important;
+        }
+
+        html.light .bg-slate-900\/50 {
+            background-color: #e2e8f0 !important;
+        }
+
+        html.light .text-slate-100,
+        html.light .text-slate-200,
+        html.light .text-slate-300 {
+            color: #1e293b !important;
+        }
+
+        html.light .text-slate-400 {
+            color: #64748b !important;
+        }
+
+        html.light .text-slate-500 {
+            color: #94a3b8 !important;
+        }
+
+        html.light .border-slate-700,
+        html.light .border-slate-800 {
+            border-color: #cbd5e1 !important;
+        }
+
+        html.light .divide-slate-800> :not(:last-child) {
+            border-color: #cbd5e1 !important;
+        }
+
+        html.light #location-search {
+            background: #fff !important;
+            border-color: #cbd5e1 !important;
+            color: #1e293b !important;
+        }
+
+        html.light .search-results {
+            background: #fff !important;
+            border-color: #cbd5e1 !important;
+        }
+
+        html.light .search-result-item:hover {
+            background-color: #f1f5f9 !important;
+        }
+
+        html.light .result-name {
+            color: #1e293b !important;
+        }
+
+        html.light footer {
+            background-color: #e2e8f0 !important;
+            border-color: #cbd5e1 !important;
+        }
+
+        html.light footer p,
+        html.light footer a {
+            color: #64748b !important;
+        }
+    </style>
+</head>
+
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 min-h-screen">
+
+    <!-- Top Navigation Bar -->
+    <header class="sticky top-0 z-50 glass-card border-b border-primary/10 px-6 py-4">
+        <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <div class="bg-primary p-2 rounded-lg">
+                    <span class="material-symbols-outlined text-white">thunderstorm</span>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight text-primary">Iloilo Weather - LSTM</h1>
+                    <p class="text-[10px] text-slate-400 ai-text">2-day LSTM forecast for {{ selected_location.name if
+                        selected_location else 'Iloilo City' }}, Philippines</p>
+                </div>
+            </div>
+            <div class="flex-1 max-w-xl mx-auto">
+                <div class="relative group search-container">
+                    <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <span
+                            class="material-symbols-outlined text-slate-400 group-focus-within:text-primary transition-colors">search</span>
+                    </div>
+                    <input id="location-search" name="location_search" autocomplete="off"
+                        class="block w-full pl-10 pr-3 py-2.5 bg-slate-800/50 border border-slate-700 rounded-xl leading-5 text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary sm:text-sm transition-all"
+                        placeholder="Search for location (e.g., Jaro, Iloilo City)..." type="text" />
+                    <div id="search-results" class="search-results"></div>
+                </div>
+            </div>
+            <div class="flex items-center gap-4">
+                <div class="text-right hidden sm:block">
+                    <p class="text-xs text-slate-400 uppercase font-semibold">Location</p>
+                    <p class="text-sm font-medium" id="display-location-name">{{ selected_location.name if
+                        selected_location else 'Iloilo City' }}</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="material-symbols-outlined text-sm text-slate-400" id="theme-icon-dark">dark_mode</span>
+                    <label class="theme-toggle nav-btn-hover" title="Toggle Light/Dark Mode">
+                        <input type="checkbox" id="theme-toggle-checkbox">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="material-symbols-outlined text-sm text-slate-400"
+                        id="theme-icon-light">light_mode</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 py-8 space-y-8">
+
+        <!-- Hidden location fields for search -->
+        <form method="POST" action="/forecast" id="forecast-form" style="display:none;">
+            <input type="hidden" id="location-name" name="location_name"
+                value="{{ selected_location.name if selected_location else 'Iloilo City' }}">
+            <input type="hidden" id="location-lat" name="location_lat"
+                value="{{ selected_location.lat if selected_location else 10.6969 }}">
+            <input type="hidden" id="location-lon" name="location_lon"
+                value="{{ selected_location.lon if selected_location else 122.5644 }}">
+            <input type="hidden" id="location-elevation" name="location_elevation"
+                value="{{ selected_location.elevation if selected_location else 21.0 }}">
+            <input type="hidden" name="start_date" value="{{ start_date }}">
+            <input type="hidden" name="end_date" value="{{ end_date }}">
+            <input type="hidden" id="days_to_predict" name="days_to_predict" value="2">
+        </form>
+
+        <!-- Selected Location Info -->
+        <section>
+            <div id="selected-location-info" class="p-4 rounded-xl glass-card border border-slate-700">
+                <h4 class="text-xs font-bold text-primary uppercase mb-3">Selected Location</h4>
+                <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
+                    <div><span class="text-slate-500">Name:</span> <span class="font-medium"
+                            id="display-location-name-2">{{ selected_location.name if selected_location else 'Iloilo
+                            City' }}</span></div>
+                    <div><span class="text-slate-500">Lat:</span> <span class="font-medium" id="display-location-lat">{{
+                            "%.4f"|format(selected_location.lat) if selected_location else '10.6969' }}</span></div>
+                    <div><span class="text-slate-500">Lon:</span> <span class="font-medium" id="display-location-lon">{{
+                            "%.4f"|format(selected_location.lon) if selected_location else '122.5644' }}</span></div>
+                    <div><span class="text-slate-500">Elev:</span> <span class="font-medium"
+                            id="display-location-elevation">{{ selected_location.elevation if selected_location else
+                            '21.0' }}</span>m</div>
+                    <div><span class="text-slate-500">Region:</span> <span class="font-medium"
+                            id="display-location-region">{{ selected_location.admin1 if selected_location else 'Western
+                            Visayas' }}</span></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Primary Forecast: Next N Days -->
+        {% if forecast_data %}
+        <section>
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary">event</span>
+                    Primary Forecast: Next {{ days_to_predict }} Day{{ 's' if days_to_predict > 1 else '' }}
+                </h2>
+                <span class="text-xs bg-primary/20 text-primary px-3 py-1 rounded-full font-bold uppercase">LSTM
+                    Model</span>
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {% for day in forecast_data %}
+                <div
+                    class="p-8 rounded-xl glass-card forecast-card-hover {{ 'border border-primary/30 shadow-2xl shadow-primary/5' if loop.first else 'border border-slate-700' }} relative overflow-hidden">
+                    <div class="absolute top-0 right-0 p-4">
+                        {% if loop.first %}
+                        <span class="text-sm font-bold text-primary bg-primary/10 px-3 py-1 rounded-lg">DAY {{
+                            loop.index }}</span>
+                        {% else %}
+                        <span class="text-sm font-bold text-slate-400 bg-slate-800 px-3 py-1 rounded-lg">DAY {{
+                            loop.index }}</span>
+                        {% endif %}
+                    </div>
+                    <div class="flex flex-col md:flex-row gap-8 items-center mb-6">
+                        <div class="text-center md:text-left">
+                            <p class="text-slate-400 font-medium">{{ day.date.strftime('%A, %b %d') }}{% if
+                                day.date.strftime('%Y-%m-%d') == today_date %} (Today){% endif %}</p>
+                            <h3 class="text-6xl font-bold my-2">{{ "%.0f"|format(day.temperature_2m_max) }}°C</h3>
+                        </div>
+                        <div class="flex-1 flex justify-center">
+                            {% if day.rain_sum > 5 %}
+                            <span class="material-symbols-outlined text-[100px] text-indigo-400">rainy</span>
+                            {% elif day.rain_sum > 0 %}
+                            <span class="material-symbols-outlined text-[100px] text-cyan-400">partly_cloudy_day</span>
+                            {% else %}
+                            <span class="material-symbols-outlined text-[100px] text-primary chart-glow">sunny</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-xs text-left">
+                            <thead>
+                                <tr class="text-slate-500 border-b border-slate-700/50">
+                                    <th class="pb-2 font-medium">Min/Max Temp</th>
+                                    <th class="pb-2 font-medium">Rain</th>
+                                    <th class="pb-2 font-medium">Wind</th>
+                                    <th class="pb-2 font-medium">Humid</th>
+                                    <th class="pb-2 font-medium">Dew Pt</th>
+                                    <th class="pb-2 font-medium">Sunshine</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr class="text-slate-200 font-medium">
+                                    <td class="py-2">{{ "%.1f"|format(day.temperature_2m_min) }}° / {{
+                                        "%.1f"|format(day.temperature_2m_max) }}°C</td>
+                                    <td class="py-2">{{ "%.1f"|format(day.rain_sum) }} mm</td>
+                                    <td class="py-2">{{ "%.1f"|format(day.wind_speed_10m_mean) }} km/h</td>
+                                    <td class="py-2">{{ "%.0f"|format(day.relative_humidity_2m_mean) }}%</td>
+                                    <td class="py-2">{{ "%.1f"|format(day.dew_point_2m_mean) }}°C</td>
+                                    <td class="py-2">{{ "%.0f"|format(day.sunshine_duration) }}s</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+        {% endif %}
+
+        <!-- 7-Day Weather Trends (Chart + Table) -->
+        {% if historical_data %}
+        <section>
+            <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                <span class="material-symbols-outlined text-primary">stacked_line_chart</span>
+                7-Day Temperature &amp; Weather Trends — {{ selected_location.name if selected_location else 'Iloilo
+                City' }}
+            </h2>
+            <div class="p-6 rounded-xl glass-card border border-slate-700">
+                <div class="mb-4">
+                    <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+                        <div class="flex flex-wrap gap-x-2 gap-y-2" id="parameterSelector7Day">
+                            <button
+                                class="param-btn-tw active flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="tempMin">
+                                <span class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span>Min Temp
+                            </button>
+                            <button
+                                class="param-btn-tw flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="tempMax">
+                                <span class="w-2.5 h-2.5 rounded-full bg-primary"></span>Max Temp
+                            </button>
+                            <button
+                                class="param-btn-tw flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="rainSum">
+                                <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>Rain
+                            </button>
+                            <button
+                                class="param-btn-tw flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="windSpeed">
+                                <span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>Wind
+                            </button>
+                            <button
+                                class="param-btn-tw flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="humidity">
+                                <span class="w-2.5 h-2.5 rounded-full bg-purple-400"></span>Humid
+                            </button>
+                            <button
+                                class="param-btn-tw flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="dewPoint">
+                                <span class="w-2.5 h-2.5 rounded-full bg-rose-400"></span>Dew Pt
+                            </button>
+                            <button
+                                class="param-btn-tw flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="sunshine">
+                                <span class="w-2.5 h-2.5 rounded-full bg-orange-400"></span>Sunshine
+                            </button>
+                        </div>
+                    </div>
+                    <h3 class="text-sm font-semibold text-primary mb-2" id="graphTitle7Day">Minimum Temperature Trend
+                        (Last 7 Days)</h3>
+                    <div class="relative" style="height: 300px;">
+                        <canvas id="weatherTrendChart7Day"></canvas>
+                    </div>
+                </div>
+
+                <div class="flex justify-end mb-4">
+                    <button onclick="downloadCSV('historical-table', '7day_weather_data.csv')"
+                        class="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition-all">
+                        <span class="material-symbols-outlined text-sm">download</span> Download CSV
+                    </button>
+                </div>
+
+                <div class="mt-4 overflow-x-auto">
+                    <table class="w-full text-left text-sm" id="historical-table">
+                        <thead>
+                            <tr class="border-b border-slate-700 text-slate-400 text-xs uppercase">
+                                <th class="py-3 px-2">Date</th>
+                                <th class="py-3 px-2">Min Temp</th>
+                                <th class="py-3 px-2">Max Temp</th>
+                                <th class="py-3 px-2">Rain (mm)</th>
+                                <th class="py-3 px-2">Wind (km/h)</th>
+                                <th class="py-3 px-2">Humid (%)</th>
+                                <th class="py-3 px-2">Dew Pt (°C)</th>
+                                <th class="py-3 px-2">Sun (s)</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800 text-slate-300">
+                            {% for day in historical_data %}
+                            <tr>
+                                <td class="py-3 px-2 font-medium">{{ day.date }}</td>
+                                <td class="py-3 px-2">{{ "%.3f"|format(day.temperature_2m_min) }}°C</td>
+                                <td class="py-3 px-2">{{ "%.3f"|format(day.temperature_2m_max) }}°C</td>
+                                <td class="py-3 px-2">{{ "%.3f"|format(day.rain_sum) }}</td>
+                                <td class="py-3 px-2">{{ "%.3f"|format(day.wind_speed_10m_mean) }}</td>
+                                <td class="py-3 px-2">{{ "%.3f"|format(day.relative_humidity_2m_mean) }}</td>
+                                <td class="py-3 px-2">{{ "%.3f"|format(day.dew_point_2m_mean) }}</td>
+                                <td class="py-3 px-2">{{ "%.3f"|format(day.sunshine_duration) }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+        {% endif %}
+
+        <!-- Historical Comparison (Past 10 Years) -->
+        {% if forecast_data and forecast_data|length > 0 %}
+        <section>
+            <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                <span class="material-symbols-outlined text-primary">history</span>
+                Historical Comparison — Historical Data (2025)
+            </h2>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <!-- Historical Day 1 -->
+                {% if historical_forecast_1 %}
+                <div>
+                    <h3 class="text-md font-bold mb-4 text-primary">
+                        Historical: {{ forecast_data[0].date.day }}th {{ month_names[forecast_data[0].date.month - 1] }}
+                        (Day 1)
+                    </h3>
+
+                    <!-- Chart for Historical Day 1 -->
+                    <div class="mb-4">
+                        <div class="flex flex-wrap gap-x-2 gap-y-2 mb-3" id="parameterSelector1">
+                            <button
+                                class="param-btn-tw active flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="tempMin">
+                                <span class="w-2 h-2 rounded-full bg-cyan-400"></span>Min Temp
+                            </button>
+                            <button
+                                class="param-btn-tw flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="tempMax">
+                                <span class="w-2 h-2 rounded-full bg-primary"></span>Max Temp
+                            </button>
+                            <button
+                                class="param-btn-tw flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="rainSum">
+                                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>Rain
+                            </button>
+                            <button
+                                class="param-btn-tw flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="windSpeed">
+                                <span class="w-2 h-2 rounded-full bg-amber-400"></span>Wind
+                            </button>
+                            <button
+                                class="param-btn-tw flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="humidity">
+                                <span class="w-2 h-2 rounded-full bg-purple-400"></span>Humid
+                            </button>
+                            <button
+                                class="param-btn-tw flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="dewPoint">
+                                <span class="w-2 h-2 rounded-full bg-rose-400"></span>Dew Pt
+                            </button>
+                            <button
+                                class="param-btn-tw flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="sunshine">
+                                <span class="w-2 h-2 rounded-full bg-orange-400"></span>Sun
+                            </button>
+                        </div>
+                        <h4 class="text-xs font-semibold text-primary mb-2" id="graphTitle1">Minimum Temperature Trend
+                        </h4>
+                        <div class="relative" style="height: 220px;">
+                            <canvas id="weatherTrendChart1"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-end mb-2">
+                        <button onclick="downloadCSV('hist-table-1', 'historical_day1.csv')"
+                            class="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800/50 hover:bg-slate-700 text-slate-300 text-[10px] font-bold rounded-md border border-slate-700/50 transition-all">
+                            <span class="material-symbols-outlined text-xs">download</span> CSV
+                        </button>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse text-xs" id="hist-table-1">
+                            <thead class="border-b border-slate-700">
+                                <tr>
+                                    <th class="py-2 px-2 text-slate-400">Year</th>
+                                    <th class="py-2 px-2 text-slate-400">Min Temp</th>
+                                    <th class="py-2 px-2 text-slate-400">Max Temp</th>
+                                    <th class="py-2 px-2 text-slate-400">Rain</th>
+                                    <th class="py-2 px-2 text-slate-400">Wind</th>
+                                    <th class="py-2 px-2 text-slate-400">Humid</th>
+                                    <th class="py-2 px-2 text-slate-400">Dew Pt</th>
+                                    <th class="py-2 px-2 text-slate-400">Sun</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-800">
+                                {% for year_data in historical_forecast_1 %}
+                                <tr class="hover:bg-slate-800/30">
+                                    <td class="py-2 px-2 font-bold">{{ year_data.year }}</td>
+                                    <td class="py-2 px-2">{{ "%.1f"|format(year_data.temperature_2m_min) }}°</td>
+                                    <td class="py-2 px-2">{{ "%.1f"|format(year_data.temperature_2m_max) }}°</td>
+                                    <td class="py-2 px-2">{{ "%.1f"|format(year_data.rain_sum) }}</td>
+                                    <td class="py-2 px-2">{{ "%.1f"|format(year_data.wind_speed_10m_mean) }} km/h</td>
+                                    <td class="py-2 px-2">{{ "%.0f"|format(year_data.relative_humidity_2m_mean) }}%</td>
+                                    <td class="py-2 px-2">{{ "%.1f"|format(year_data.dew_point_2m_mean) }}°</td>
+                                    <td class="py-2 px-2">{{ "%.0f"|format(year_data.sunshine_duration) }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Historical Day 2 -->
+                {% if forecast_data|length > 1 and historical_forecast_2 %}
+                <div>
+                    <h3 class="text-md font-bold mb-4 text-indigo-400">
+                        Historical: {{ forecast_data[1].date.day }}th {{ month_names[forecast_data[1].date.month - 1] }}
+                        (Day 2)
+                    </h3>
+
+                    <!-- Chart for Historical Day 2 -->
+                    <div class="mb-4">
+                        <div class="flex flex-wrap gap-x-2 gap-y-2 mb-3" id="parameterSelector2">
+                            <button
+                                class="param-btn-tw active flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="tempMin">
+                                <span class="w-2 h-2 rounded-full bg-cyan-400"></span>Min Temp
+                            </button>
+                            <button
+                                class="param-btn-tw flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="tempMax">
+                                <span class="w-2 h-2 rounded-full bg-primary"></span>Max Temp
+                            </button>
+                            <button
+                                class="param-btn-tw flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="rainSum">
+                                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>Rain
+                            </button>
+                            <button
+                                class="param-btn-tw flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="windSpeed">
+                                <span class="w-2 h-2 rounded-full bg-amber-400"></span>Wind
+                            </button>
+                            <button
+                                class="param-btn-tw flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="humidity">
+                                <span class="w-2 h-2 rounded-full bg-purple-400"></span>Humid
+                            </button>
+                            <button
+                                class="param-btn-tw flex items-center gap-1.5 px-2 py-1 rounded transition-colors text-[10px] font-medium"
+                                data-param="dewPoint">
+                                <span class="w-2 h-2 rounded-full bg-rose-400"></span>Dew Pt
+                            </button>
+                            <button
+                                class="param-btn-tw flex items-center gap-1.5 px-2 py-1 rounded transition-controls text-[10px] font-medium"
+                                data-param="sunshine">
+                                <span class="w-2 h-2 rounded-full bg-orange-400"></span>Sun
+                            </button>
+                        </div>
+                        <h4 class="text-xs font-semibold text-indigo-400 mb-2" id="graphTitle2">Minimum Temperature
+                            Trend</h4>
+                        <div class="relative" style="height: 220px;">
+                            <canvas id="weatherTrendChart2"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-end mb-2">
+                        <button onclick="downloadCSV('hist-table-2', 'historical_day2.csv')"
+                            class="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800/50 hover:bg-slate-700 text-slate-300 text-[10px] font-bold rounded-md border border-slate-700/50 transition-all">
+                            <span class="material-symbols-outlined text-xs">download</span> CSV
+                        </button>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse text-xs" id="hist-table-2">
+                            <thead class="border-b border-slate-700">
+                                <tr>
+                                    <th class="py-2 px-2 text-slate-400">Year</th>
+                                    <th class="py-2 px-2 text-slate-400">Min Temp</th>
+                                    <th class="py-2 px-2 text-slate-400">Max Temp</th>
+                                    <th class="py-2 px-2 text-slate-400">Rain</th>
+                                    <th class="py-2 px-2 text-slate-400">Wind</th>
+                                    <th class="py-2 px-2 text-slate-400">Humid</th>
+                                    <th class="py-2 px-2 text-slate-400">Dew Pt</th>
+                                    <th class="py-2 px-2 text-slate-400">Sun</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-800">
+                                {% for year_data in historical_forecast_2 %}
+                                <tr class="hover:bg-slate-800/30">
+                                    <td class="py-2 px-2 font-bold">{{ year_data.year }}</td>
+                                    <td class="py-2 px-2">{{ "%.1f"|format(year_data.temperature_2m_min) }}°</td>
+                                    <td class="py-2 px-2">{{ "%.1f"|format(year_data.temperature_2m_max) }}°</td>
+                                    <td class="py-2 px-2">{{ "%.1f"|format(year_data.rain_sum) }}</td>
+                                    <td class="py-2 px-2">{{ "%.1f"|format(year_data.wind_speed_10m_mean) }} km/h</td>
+                                    <td class="py-2 px-2">{{ "%.0f"|format(year_data.relative_humidity_2m_mean) }}%</td>
+                                    <td class="py-2 px-2">{{ "%.1f"|format(year_data.dew_point_2m_mean) }}°</td>
+                                    <td class="py-2 px-2">{{ "%.0f"|format(year_data.sunshine_duration) }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </section>
+        {% endif %}
+
+        <!-- About & Team Section -->
+        <section class="pt-8 border-t border-slate-800">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-12">
+                <div class="lg:col-span-1">
+                    <h2 class="text-xl font-bold text-primary mb-4">About the Project</h2>
+                    <p class="text-slate-400 leading-relaxed text-sm">
+                        Iloilo Weather - LSTM utilizes Long Short-Term Memory neural networks to provide hyper-local
+                        weather predictions. By processing decades of historical meteorological data from Iloilo City,
+                        our model identifies complex patterns that traditional physical models might miss.
+                    </p>
+                    <div class="mt-6 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 gap-3">
+                        <div class="p-3 bg-slate-800 rounded-lg">
+                            <span class="material-symbols-outlined text-primary">memory</span>
+                            <p class="text-[10px] mt-1 font-bold">100% Tani Accuracy</p>
+                        </div>
+                        <div class="p-3 bg-slate-800 rounded-lg">
+                            <span class="material-symbols-outlined text-primary">update</span>
+                            <p class="text-[10px] mt-1 font-bold">Real-time Feed</p>
+                        </div>
+                        <div class="p-3 bg-slate-800 rounded-lg">
+                            <span class="material-symbols-outlined text-primary">equalizer</span>
+                            <p class="text-[10px] mt-1 font-bold">R²: )</p>
+                        </div>
+                        <div class="p-3 bg-slate-800 rounded-lg">
+                            <span class="material-symbols-outlined text-primary">error_outline</span>
+                            <p class="text-[10px] mt-1 font-bold">RMSE: </p>
+                        </div>
+                        <div class="p-3 bg-slate-800 rounded-lg">
+                            <span class="material-symbols-outlined text-primary">straighten</span>
+                            <p class="text-[10px] mt-1 font-bold">MAE: </p>
+                        </div>
+                    </div>
+                </div>
+                <div class="lg:col-span-2">
+                    <h2 class="text-xl font-bold mb-6">Meet Our Team</h2>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                        <!-- Team Member 1 -->
+                        <div class="flex items-center gap-4 advisor-card-hover p-3 rounded-xl">
+                            <div class="size-16 rounded-full overflow-hidden bg-primary/10 border border-primary/20">
+                                <img alt="Jael, Nethan Quinn" class="w-full h-full object-cover"
+                                    src="{{ url_for('static', filename='images/member5.png') }}" />
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-sm">Jael, Nethan Quinn</h4>
+                                <p class="text-xs text-primary font-medium">Researcher</p>
+                            </div>
+                        </div>
+                        <!-- Team Member 2 -->
+                        <div class="flex items-center gap-4 advisor-card-hover p-3 rounded-xl">
+                            <div class="size-16 rounded-full overflow-hidden bg-primary/10 border border-primary/20">
+                                <img alt="Maxino, Loi Marie" class="w-full h-full object-cover"
+                                    src="{{ url_for('static', filename='images/member6.png') }}" />
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-sm">Maxino, Loi Marie</h4>
+                                <p class="text-xs text-primary font-medium">Researcher</p>
+                            </div>
+                        </div>
+                        <!-- Team Member 3 -->
+                        <div class="flex items-center gap-4 advisor-card-hover p-3 rounded-xl">
+                            <div class="size-16 rounded-full overflow-hidden bg-primary/10 border border-primary/20">
+                                <img alt="Oliverio, Aaron Hans" class="w-full h-full object-cover"
+                                    src="{{ url_for('static', filename='images/member2.png') }}" />
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-sm">Oliverio, Aaron Hans</h4>
+                                <p class="text-xs text-primary font-medium">Researcher</p>
+                            </div>
+                        </div>
+                        <!-- Team Member 4 -->
+                        <div class="flex items-center gap-4 advisor-card-hover p-3 rounded-xl">
+                            <div class="size-16 rounded-full overflow-hidden bg-primary/10 border border-primary/20">
+                                <img alt="Patriarca, Raymart John" class="w-full h-full object-cover"
+                                    src="{{ url_for('static', filename='images/member1.png') }}" />
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-sm">Patriarca, Raymart John</h4>
+                                <p class="text-xs text-primary font-medium">Researcher</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <h3 class="text-lg font-bold mt-8 mb-4 flex items-center gap-2">
+                        <span class="material-symbols-outlined text-primary text-sm">school</span>
+                        Thesis Advisors
+                    </h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                        <div class="flex items-center gap-4 advisor-card-hover p-3 rounded-xl">
+                            <div
+                                class="size-16 rounded-full overflow-hidden bg-slate-800 border border-slate-700 flex items-center justify-center">
+                                <span class="material-symbols-outlined text-slate-400 text-3xl">account_circle</span>
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-sm">Lovidrick Barrios</h4>
+                                <p class="text-xs text-slate-400 font-medium">Adviser</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-4 advisor-card-hover p-3 rounded-xl">
+                            <div
+                                class="size-16 rounded-full overflow-hidden bg-slate-800 border border-slate-700 flex items-center justify-center">
+                                <span class="material-symbols-outlined text-slate-400 text-3xl">account_circle</span>
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-sm">Maureen Nettie Linan</h4>
+                                <p class="text-xs text-slate-400 font-medium">Adviser</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-4 advisor-card-hover p-3 rounded-xl">
+                            <div
+                                class="size-16 rounded-full overflow-hidden bg-slate-800 border border-slate-700 flex items-center justify-center">
+                                <span class="material-symbols-outlined text-slate-400 text-3xl">account_circle</span>
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-sm">Joyce Jamile</h4>
+                                <p class="text-xs text-slate-400 font-medium">Panel</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-4 advisor-card-hover p-3 rounded-xl">
+                            <div
+                                class="size-16 rounded-full overflow-hidden bg-slate-800 border border-slate-700 flex items-center justify-center">
+                                <span class="material-symbols-outlined text-slate-400 text-3xl">account_circle</span>
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-sm">Yvette Gonzales</h4>
+                                <p class="text-xs text-slate-400 font-medium">Panel</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-8 p-4 bg-slate-800/50 rounded-lg border border-slate-700">
+                        <h3 class="text-sm font-bold text-primary mb-2">Thesis Information</h3>
+                        <div class="text-xs text-slate-400 space-y-1">
+                            <p><strong class="text-slate-300">Title:</strong> Enhancing Localized Weather Forecasting in
+                                Iloilo Using Long-Short Term Memory (LSTM)</p>
+                            <p><strong class="text-slate-300">Institution:</strong> Iloilo Science and Technology
+                                University - Main Campus</p>
+                            <p><strong class="text-slate-300">Date:</strong> December 2025</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="bg-slate-900/50 border-t border-slate-800 py-8 px-4 text-center">
+        <div class="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
+            <p class="text-slate-500 text-sm">© 2025 Iloilo Weather - LSTM Dashboard. All data sourced from Open-Meteo
+                Weather Data API.</p>
+            <div class="flex gap-6">
+                <a class="text-slate-400 hover:text-primary transition-colors text-sm" href="#">Privacy Policy</a>
+                <a class="text-slate-400 hover:text-primary transition-colors text-sm" href="#">Terms of Service</a>
+                <a class="text-slate-400 hover:text-primary transition-colors text-sm" href="#">Contact Support</a>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // ==========================================
+        // CSV Download Utility
+        // ==========================================
+        function downloadCSV(tableId, filename) {
+            const table = document.getElementById(tableId);
+            if (!table) return;
+            let csv = [];
+            const rows = table.querySelectorAll('tr');
+            rows.forEach(row => {
+                const cols = row.querySelectorAll('th, td');
+                const rowData = [];
+                cols.forEach(col => rowData.push('"' + col.textContent.trim().replace(/"/g, '""') + '"'));
+                csv.push(rowData.join(','));
+            });
+            const blob = new Blob([csv.join('\n')], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = filename; a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // ==========================================
+        // Chart Initialization
+        // ==========================================
+        document.addEventListener('DOMContentLoaded', function () {
+            {% if forecast_data and forecast_data | length > 0 %}
+            initializeChart('weatherTrendChart1', 'graphTitle1', 'parameterSelector1', {{ historical_forecast_1 | tojson }});
+        {% endif %}
+
+        {% if forecast_data and forecast_data | length > 1 %}
+        initializeChart('weatherTrendChart2', 'graphTitle2', 'parameterSelector2', {{ historical_forecast_2 | tojson }});
+        {% endif %}
+
+        {% if historical_data %}
+        initialize7DayChart('weatherTrendChart7Day', 'graphTitle7Day', 'parameterSelector7Day', {{ historical_data | tojson }});
+        {% endif %}
+    });
+
+        // ==========================================
+        // Location Search
+        // ==========================================
+        document.addEventListener('DOMContentLoaded', function () {
+            const searchInput = document.getElementById('location-search');
+            const searchResults = document.getElementById('search-results');
+            const locationNameInput = document.getElementById('location-name');
+            const locationLatInput = document.getElementById('location-lat');
+            const locationLonInput = document.getElementById('location-lon');
+            const locationElevationInput = document.getElementById('location-elevation');
+
+            const displayLocationName = document.getElementById('display-location-name');
+            const displayLocationName2 = document.getElementById('display-location-name-2');
+            const displayLocationLat = document.getElementById('display-location-lat');
+            const displayLocationLon = document.getElementById('display-location-lon');
+            const displayLocationElevation = document.getElementById('display-location-elevation');
+            const displayLocationRegion = document.getElementById('display-location-region');
+
+            let searchTimeout;
+
+            searchInput.addEventListener('input', function () {
+                clearTimeout(searchTimeout);
+                const query = this.value.trim();
+
+                if (query.length < 2) {
+                    searchResults.style.display = 'none';
+                    return;
+                }
+
+                searchTimeout = setTimeout(() => {
+                    fetch(`/search_locations?query=${encodeURIComponent(query)}`)
+                        .then(response => response.json())
+                        .then(locations => {
+                            searchResults.innerHTML = '';
+
+                            if (locations.length === 0) {
+                                searchResults.innerHTML = '<div class="search-result-item no-results">No locations found in Western Visayas</div>';
+                                searchResults.style.display = 'block';
+                                return;
+                            }
+
+                            locations.forEach(location => {
+                                const resultItem = document.createElement('div');
+                                resultItem.className = 'search-result-item';
+                                resultItem.innerHTML = `
+                                <div class="result-name">${location.name}</div>
+                                <div class="result-details">
+                                    Lat: ${location.lat.toFixed(4)}°N,
+                                    Lon: ${location.lon.toFixed(4)}°E,
+                                    Elev: ${location.elevation || 'N/A'}m
+                                </div>
+                                <div class="result-admin">${location.admin2 || ''} ${location.admin3 ? '• ' + location.admin3 : ''}</div>
+                            `;
+
+                                resultItem.addEventListener('click', function () {
+                                    selectLocation(location);
+                                });
+
+                                searchResults.appendChild(resultItem);
+                            });
+
+                            searchResults.style.display = 'block';
+                        })
+                        .catch(error => {
+                            console.error('Error searching locations:', error);
+                            searchResults.innerHTML = '<div class="search-result-item no-results">Error searching locations</div>';
+                            searchResults.style.display = 'block';
+                        });
+                }, 300);
+            });
+
+            function selectLocation(location) {
+                locationNameInput.value = location.name;
+                locationLatInput.value = location.lat;
+                locationLonInput.value = location.lon;
+                locationElevationInput.value = location.elevation || 'N/A';
+
+                displayLocationName.textContent = location.name;
+                if (displayLocationName2) displayLocationName2.textContent = location.name;
+                displayLocationLat.textContent = location.lat.toFixed(4);
+                displayLocationLon.textContent = location.lon.toFixed(4);
+                displayLocationElevation.textContent = location.elevation || 'N/A';
+                displayLocationRegion.textContent = location.admin1 || 'Western Visayas';
+
+                searchInput.value = '';
+                searchResults.style.display = 'none';
+
+                document.querySelector('.ai-text').textContent =
+                    `2-day LSTM forecast for ${location.name}, Philippines`;
+
+                // Auto-submit form to reload with new location's forecast & historical data
+                document.getElementById('forecast-form').submit();
+            }
+
+            document.addEventListener('click', function (event) {
+                if (!event.target.closest('.search-container')) {
+                    searchResults.style.display = 'none';
+                }
+            });
+        });
+
+        // ==========================================
+        // Historical Chart (for forecast day comparisons)
+        // ==========================================
+        function initializeChart(canvasId, titleId, selectorId, historicalData) {
+            const years = historicalData.map(item => item.year);
+            const tempMinData = historicalData.map(item => item.temperature_2m_min);
+            const tempMaxData = historicalData.map(item => item.temperature_2m_max);
+            const rainData = historicalData.map(item => item.rain_sum);
+            const windSpeedData = historicalData.map(item => item.wind_speed_10m_mean);
+            const humidityData = historicalData.map(item => item.relative_humidity_2m_mean);
+            const dewPointData = historicalData.map(item => item.dew_point_2m_mean);
+            const sunshineData = historicalData.map(item => item.sunshine_duration);
+
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            let chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: years,
+                    datasets: [{
+                        label: 'Min Temperature (°C)',
+                        data: tempMinData,
+                        borderColor: '#22d3ee',
+                        backgroundColor: 'rgba(34, 211, 238, 0.1)',
+                        tension: 0.3,
+                        fill: true,
+                        pointRadius: 3,
+                        pointBackgroundColor: '#22d3ee'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#94a3b8', font: { size: 10 } } }
+                    },
+                    scales: {
+                        y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', font: { size: 10 } } },
+                        x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', font: { size: 10 } } }
+                    }
+                }
+            });
+
+            const paramButtons = document.querySelectorAll(`#${selectorId} .param-btn-tw`);
+            paramButtons.forEach(button => {
+                button.addEventListener('click', function () {
+                    paramButtons.forEach(btn => btn.classList.remove('active'));
+                    this.classList.add('active');
+
+                    const titleElement = document.getElementById(titleId);
+                    titleElement.textContent = `${this.textContent.trim()} Trend`;
+
+                    const param = this.getAttribute('data-param');
+                    let newData, newLabel, newColor;
+
+                    switch (param) {
+                        case 'tempMin': newData = tempMinData; newLabel = 'Min Temperature (°C)'; newColor = '#22d3ee'; break;
+                        case 'tempMax': newData = tempMaxData; newLabel = 'Max Temperature (°C)'; newColor = '#137fec'; break;
+                        case 'rainSum': newData = rainData; newLabel = 'Rain (mm)'; newColor = '#34d399'; break;
+                        case 'windSpeed': newData = windSpeedData; newLabel = 'Wind Speed (km/h)'; newColor = '#fbbf24'; break;
+                        case 'humidity': newData = humidityData; newLabel = 'Humidity (%)'; newColor = '#c084fc'; break;
+                        case 'dewPoint': newData = dewPointData; newLabel = 'Dew Point (°C)'; newColor = '#fb7185'; break;
+                        case 'sunshine': newData = sunshineData; newLabel = 'Sunshine (s)'; newColor = '#fb923c'; break;
+                    }
+
+                    chart.data.datasets = [{
+                        label: newLabel, data: newData,
+                        borderColor: newColor, backgroundColor: newColor + '1a',
+                        tension: 0.3, fill: true, pointRadius: 3, pointBackgroundColor: newColor
+                    }];
+                    chart.update();
+                });
+            });
+        }
+
+        // ==========================================
+        // 7-Day Trend Chart
+        // ==========================================
+        function initialize7DayChart(canvasId, titleId, selectorId, historicalData) {
+            const dates = historicalData.map(item => {
+                const date = new Date(item.date);
+                return `${date.getMonth() + 1}/${date.getDate()}`;
+            });
+
+            const tempMinData = historicalData.map(item => item.temperature_2m_min);
+            const tempMaxData = historicalData.map(item => item.temperature_2m_max);
+            const rainData = historicalData.map(item => item.rain_sum);
+            const windSpeedData = historicalData.map(item => item.wind_speed_10m_mean);
+            const humidityData = historicalData.map(item => item.relative_humidity_2m_mean);
+            const dewPointData = historicalData.map(item => item.dew_point_2m_mean);
+            const sunshineData = historicalData.map(item => item.sunshine_duration);
+
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            let chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: dates,
+                    datasets: [{
+                        label: 'Min Temperature (°C)',
+                        data: tempMinData,
+                        borderColor: '#22d3ee',
+                        backgroundColor: 'rgba(34, 211, 238, 0.1)',
+                        tension: 0.3,
+                        fill: true,
+                        pointRadius: 4,
+                        pointBackgroundColor: '#22d3ee'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#94a3b8', font: { size: 11 } } }
+                    },
+                    scales: {
+                        y: { beginAtZero: false, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
+                        x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } }
+                    }
+                }
+            });
+
+            const paramButtons = document.querySelectorAll(`#${selectorId} .param-btn-tw`);
+            paramButtons.forEach(button => {
+                button.addEventListener('click', function () {
+                    paramButtons.forEach(btn => btn.classList.remove('active'));
+                    this.classList.add('active');
+
+                    const titleElement = document.getElementById(titleId);
+                    titleElement.textContent = `${this.textContent.trim()} Trend (Last 7 Days)`;
+
+                    const param = this.getAttribute('data-param');
+                    let newData, newLabel, newColor;
+
+                    switch (param) {
+                        case 'tempMin': newData = tempMinData; newLabel = 'Min Temperature (°C)'; newColor = '#22d3ee'; break;
+                        case 'tempMax': newData = tempMaxData; newLabel = 'Max Temperature (°C)'; newColor = '#137fec'; break;
+                        case 'rainSum': newData = rainData; newLabel = 'Rain (mm)'; newColor = '#34d399'; break;
+                        case 'windSpeed': newData = windSpeedData; newLabel = 'Wind Speed (km/h)'; newColor = '#fbbf24'; break;
+                        case 'humidity': newData = humidityData; newLabel = 'Humidity (%)'; newColor = '#c084fc'; break;
+                        case 'dewPoint': newData = dewPointData; newLabel = 'Dew Point (°C)'; newColor = '#fb7185'; break;
+                        case 'sunshine': newData = sunshineData; newLabel = 'Sunshine (s)'; newColor = '#fb923c'; break;
+                    }
+
+                    chart.data.datasets = [{
+                        label: newLabel, data: newData,
+                        borderColor: newColor, backgroundColor: newColor + '1a',
+                        tension: 0.3, fill: true, pointRadius: 4, pointBackgroundColor: newColor
+                    }];
+                    chart.update();
+                });
+            });
+        }
+
+        // ==========================================
+        // Active state styling for param buttons
+        // ==========================================
+        document.addEventListener('DOMContentLoaded', function () {
+            const style = document.createElement('style');
+            style.textContent = `
+            .param-btn-tw { color: #94a3b8; cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease; }
+            .param-btn-tw:hover { background: rgba(255,255,255,0.05); color: #e2e8f0; transform: translateY(-1px); }
+            .param-btn-tw.active { background: rgba(19,127,236,0.15); color: #60a5fa; }
+        `;
+            document.head.appendChild(style);
+        });
+
+        // ==========================================
+        // Dark / Light Mode Toggle
+        // ==========================================
+        (function () {
+            const html = document.documentElement;
+            const savedTheme = localStorage.getItem('theme-mode');
+
+            // Default is dark mode (class="dark")
+            if (savedTheme === 'light') {
+                html.classList.remove('dark');
+                html.classList.add('light');
+            }
+
+            document.addEventListener('DOMContentLoaded', function () {
+                const toggle = document.getElementById('theme-toggle-checkbox');
+                if (!toggle) return;
+
+                // Set initial state of checkbox
+                toggle.checked = html.classList.contains('light');
+
+                toggle.addEventListener('change', function () {
+                    if (this.checked) {
+                        html.classList.remove('dark');
+                        html.classList.add('light');
+                        localStorage.setItem('theme-mode', 'light');
+                    } else {
+                        html.classList.remove('light');
+                        html.classList.add('dark');
+                        localStorage.setItem('theme-mode', 'dark');
+                    }
+                });
+            });
+        })();
+    </script>
+
+    <!-- ==========================================
+         THESIS CHATBOT WIDGET
+         ========================================== -->
+    <style>
+        /* Chatbot Floating Button */
+        .chatbot-fab {
+            position: fixed;
+            bottom: 28px;
+            right: 28px;
+            z-index: 9998;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #137fec 0%, #0d5bbd 100%);
+            border: none;
+            color: white;
+            cursor: pointer;
+            box-shadow: 0 6px 24px rgba(19, 127, 236, 0.45), 0 2px 8px rgba(0, 0, 0, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.3s cubic-bezier(.34, 1.56, .64, 1), box-shadow 0.3s ease;
+        }
+
+        .chatbot-fab:hover {
+            transform: scale(1.1);
+            box-shadow: 0 8px 32px rgba(19, 127, 236, 0.6), 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .chatbot-fab .fab-icon {
+            font-size: 28px;
+            transition: transform 0.35s ease;
+        }
+
+        .chatbot-fab.open .fab-icon {
+            transform: rotate(90deg);
+        }
+
+        .chatbot-fab .fab-badge {
+            position: absolute;
+            top: -2px;
+            right: -2px;
+            width: 18px;
+            height: 18px;
+            background: #ef4444;
+            border-radius: 50%;
+            font-size: 10px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid #101922;
+            animation: badgePulse 2s ease-in-out infinite;
+        }
+
+        @keyframes badgePulse {
+
+            0%,
+            100% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.15);
+            }
+        }
+
+        /* Chat Panel */
+        .chatbot-panel {
+            position: fixed;
+            bottom: 100px;
+            right: 28px;
+            z-index: 9999;
+            width: 400px;
+            max-height: 560px;
+            border-radius: 1.25rem;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(20px) scale(0.95);
+            transition: opacity 0.35s ease, transform 0.35s cubic-bezier(.34, 1.56, .64, 1), visibility 0.35s;
+            /* Glassmorphism */
+            background: rgba(16, 25, 34, 0.92);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+        }
+
+        .chatbot-panel.visible {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0) scale(1);
+        }
+
+        /* Chat Header */
+        .chatbot-header {
+            padding: 16px 20px;
+            background: linear-gradient(135deg, rgba(19, 127, 236, 0.2) 0%, rgba(19, 127, 236, 0.05) 100%);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .chatbot-header-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #137fec, #0d5bbd);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .chatbot-header-icon span {
+            color: white;
+            font-size: 22px;
+        }
+
+        .chatbot-header-info h3 {
+            font-size: 14px;
+            font-weight: 700;
+            color: #e2e8f0;
+            margin: 0;
+        }
+
+        .chatbot-header-info p {
+            font-size: 11px;
+            color: #94a3b8;
+            margin: 2px 0 0 0;
+        }
+
+        .chatbot-header-status {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .chatbot-header-status .status-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #22c55e;
+            animation: statusGlow 2s ease-in-out infinite;
+        }
+
+        .chatbot-header-status .status-dot.offline {
+            background: #ef4444;
+            animation: none;
+        }
+
+        .chatbot-header-status .status-dot.loading {
+            background: #f59e0b;
+            animation: statusGlow 1s ease-in-out infinite;
+        }
+
+        @keyframes statusGlow {
+
+            0%,
+            100% {
+                box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4);
+            }
+
+            50% {
+                box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.1);
+            }
+        }
+
+        /* Chat Messages Area */
+        .chatbot-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px 16px 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            min-height: 280px;
+            max-height: 360px;
+            scroll-behavior: smooth;
+        }
+
+        .chatbot-messages::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .chatbot-messages::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .chatbot-messages::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+        }
+
+        /* Message Bubbles */
+        .chat-msg {
+            display: flex;
+            gap: 8px;
+            max-width: 88%;
+            animation: msgSlide 0.3s ease-out;
+        }
+
+        @keyframes msgSlide {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .chat-msg.bot {
+            align-self: flex-start;
+        }
+
+        .chat-msg.user {
+            align-self: flex-end;
+            flex-direction: row-reverse;
+        }
+
+        .chat-msg-avatar {
+            width: 28px;
+            height: 28px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            font-size: 14px;
+        }
+
+        .chat-msg.bot .chat-msg-avatar {
+            background: rgba(19, 127, 236, 0.15);
+            color: #60a5fa;
+        }
+
+        .chat-msg.user .chat-msg-avatar {
+            background: rgba(139, 92, 246, 0.15);
+            color: #a78bfa;
+        }
+
+        .chat-msg-bubble {
+            padding: 10px 14px;
+            border-radius: 14px;
+            font-size: 13px;
+            line-height: 1.55;
+            word-wrap: break-word;
+        }
+
+        .chat-msg.bot .chat-msg-bubble {
+            background: rgba(255, 255, 255, 0.06);
+            color: #cbd5e1;
+            border-bottom-left-radius: 4px;
+        }
+
+        .chat-msg.user .chat-msg-bubble {
+            background: linear-gradient(135deg, #137fec, #0d5bbd);
+            color: #fff;
+            border-bottom-right-radius: 4px;
+        }
+
+        /* Typing Indicator */
+        .typing-indicator {
+            display: flex;
+            gap: 4px;
+            padding: 12px 16px;
+            align-items: center;
+        }
+
+        .typing-indicator .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #60a5fa;
+            animation: typingBounce 1.4s ease-in-out infinite;
+        }
+
+        .typing-indicator .dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-indicator .dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typingBounce {
+
+            0%,
+            60%,
+            100% {
+                transform: translateY(0);
+                opacity: 0.4;
+            }
+
+            30% {
+                transform: translateY(-6px);
+                opacity: 1;
+            }
+        }
+
+        /* Suggested Questions */
+        .chatbot-suggestions {
+            padding: 0 16px 8px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .chatbot-suggestions button {
+            background: rgba(19, 127, 236, 0.1);
+            border: 1px solid rgba(19, 127, 236, 0.2);
+            color: #60a5fa;
+            font-size: 11px;
+            padding: 5px 10px;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .chatbot-suggestions button:hover {
+            background: rgba(19, 127, 236, 0.2);
+            border-color: rgba(19, 127, 236, 0.4);
+            transform: translateY(-1px);
+        }
+
+        /* Chat Input */
+        .chatbot-input-area {
+            padding: 12px 16px 16px;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+            display: flex;
+            gap: 8px;
+            align-items: flex-end;
+        }
+
+        .chatbot-input-area input {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            padding: 10px 14px;
+            color: #e2e8f0;
+            font-size: 13px;
+            font-family: 'Inter', sans-serif;
+            outline: none;
+            transition: border-color 0.25s ease, box-shadow 0.25s ease;
+        }
+
+        .chatbot-input-area input::placeholder {
+            color: #64748b;
+        }
+
+        .chatbot-input-area input:focus {
+            border-color: rgba(19, 127, 236, 0.5);
+            box-shadow: 0 0 0 3px rgba(19, 127, 236, 0.1);
+        }
+
+        .chatbot-send-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #137fec, #0d5bbd);
+            border: none;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            transition: transform 0.2s ease, opacity 0.2s ease;
+        }
+
+        .chatbot-send-btn:hover {
+            transform: scale(1.05);
+        }
+
+        .chatbot-send-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Light Mode Overrides for Chatbot */
+        html.light .chatbot-panel {
+            background: rgba(255, 255, 255, 0.95) !important;
+            border-color: rgba(0, 0, 0, 0.08) !important;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.05) inset !important;
+        }
+
+        html.light .chatbot-header {
+            background: linear-gradient(135deg, rgba(19, 127, 236, 0.08) 0%, rgba(19, 127, 236, 0.02) 100%) !important;
+            border-color: rgba(0, 0, 0, 0.06) !important;
+        }
+
+        html.light .chatbot-header-info h3 {
+            color: #1e293b !important;
+        }
+
+        html.light .chat-msg.bot .chat-msg-bubble {
+            background: #f1f5f9 !important;
+            color: #334155 !important;
+        }
+
+        html.light .chatbot-input-area {
+            border-color: rgba(0, 0, 0, 0.06) !important;
+        }
+
+        html.light .chatbot-input-area input {
+            background: #f1f5f9 !important;
+            border-color: #cbd5e1 !important;
+            color: #1e293b !important;
+        }
+
+        html.light .chatbot-input-area input::placeholder {
+            color: #94a3b8 !important;
+        }
+
+        html.light .chatbot-fab {
+            box-shadow: 0 6px 24px rgba(19, 127, 236, 0.3), 0 2px 8px rgba(0, 0, 0, 0.1) !important;
+        }
+
+        html.light .chatbot-fab .fab-badge {
+            border-color: #f0f4f8 !important;
+        }
+
+        /* Mobile Responsive */
+        @media (max-width: 480px) {
+            .chatbot-panel {
+                width: calc(100vw - 24px);
+                right: 12px;
+                bottom: 88px;
+                max-height: 70vh;
+            }
+
+            .chatbot-fab {
+                right: 16px;
+                bottom: 16px;
+                width: 54px;
+                height: 54px;
+            }
+        }
+    </style>
+
+    <!-- Chatbot FAB Button -->
+    <button class="chatbot-fab" id="chatbot-fab" title="Ask about our thesis" onclick="toggleChatbot()">
+        <span class="material-symbols-outlined fab-icon" id="chatbot-fab-icon">smart_toy</span>
+        <span class="fab-badge" id="chatbot-badge">?</span>
+    </button>
+
+    <!-- Chatbot Panel -->
+    <div class="chatbot-panel" id="chatbot-panel">
+        <div class="chatbot-header">
+            <div class="chatbot-header-icon">
+                <span class="material-symbols-outlined">psychology</span>
+            </div>
+            <div class="chatbot-header-info">
+                <h3>Thesis Assistant</h3>
+                <div class="chatbot-header-status">
+                    <span class="status-dot loading" id="chatbot-status-dot"></span>
+                    <p id="chatbot-status-text">Initializing...</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="chatbot-messages" id="chatbot-messages">
+            <div class="chat-msg bot">
+                <div class="chat-msg-avatar">
+                    <span class="material-symbols-outlined" style="font-size:16px">psychology</span>
+                </div>
+                <div class="chat-msg-bubble">
+                    👋 Hi! I'm your thesis assistant (Chatbot v2). I can answer questions about our research paper <strong>"Enhancing
+                        Localized Weather Forecasting in Iloilo Using LSTM"</strong>. Ask me anything!
+                </div>
+            </div>
+        </div>
+
+        <div class="chatbot-suggestions" id="chatbot-suggestions">
+            <button onclick="askSuggestion(this)">What is this study about?</button>
+            <button onclick="askSuggestion(this)">What LSTM model was used?</button>
+            <button onclick="askSuggestion(this)">What are the key findings?</button>
+            <button onclick="askSuggestion(this)">Who are the researchers?</button>
+        </div>
+
+        <div class="chatbot-input-area">
+            <input type="text" id="chatbot-input" placeholder="Ask about our thesis..."
+                onkeydown="if(event.key==='Enter')sendChatMessage()" autocomplete="off" />
+            <button class="chatbot-send-btn" id="chatbot-send" onclick="sendChatMessage()" title="Send">
+                <span class="material-symbols-outlined" style="font-size:20px">send</span>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // Thesis Chatbot Widget Logic
+        // ==========================================
+        const chatbotPanel = document.getElementById('chatbot-panel');
+        const chatbotFab = document.getElementById('chatbot-fab');
+        const chatbotFabIcon = document.getElementById('chatbot-fab-icon');
+        const chatbotBadge = document.getElementById('chatbot-badge');
+        const chatbotMessages = document.getElementById('chatbot-messages');
+        const chatbotInput = document.getElementById('chatbot-input');
+        const chatbotSend = document.getElementById('chatbot-send');
+        const chatbotStatusDot = document.getElementById('chatbot-status-dot');
+        const chatbotStatusText = document.getElementById('chatbot-status-text');
+        const chatbotSuggestions = document.getElementById('chatbot-suggestions');
+
+        let chatbotOpen = false;
+        let chatbotReady = false;
+        let isWaitingForReply = false;
+
+        function toggleChatbot() {
+            chatbotOpen = !chatbotOpen;
+            chatbotPanel.classList.toggle('visible', chatbotOpen);
+            chatbotFab.classList.toggle('open', chatbotOpen);
+            chatbotFabIcon.textContent = chatbotOpen ? 'close' : 'smart_toy';
+            if (chatbotOpen) {
+                chatbotBadge.style.display = 'none';
+                chatbotInput.focus();
+            }
+        }
+
+        function addMessage(text, sender) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `chat-msg ${sender}`;
+
+            const avatar = document.createElement('div');
+            avatar.className = 'chat-msg-avatar';
+            const avatarIcon = document.createElement('span');
+            avatarIcon.className = 'material-symbols-outlined';
+            avatarIcon.style.fontSize = '16px';
+            avatarIcon.textContent = sender === 'bot' ? 'psychology' : 'person';
+            avatar.appendChild(avatarIcon);
+
+            const bubble = document.createElement('div');
+            bubble.className = 'chat-msg-bubble';
+            bubble.innerHTML = text;
+
+            msgDiv.appendChild(avatar);
+            msgDiv.appendChild(bubble);
+            chatbotMessages.appendChild(msgDiv);
+            chatbotMessages.scrollTop = chatbotMessages.scrollHeight;
+        }
+
+        function showTyping() {
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'chat-msg bot';
+            typingDiv.id = 'typing-indicator';
+
+            const avatar = document.createElement('div');
+            avatar.className = 'chat-msg-avatar';
+            const avatarIcon = document.createElement('span');
+            avatarIcon.className = 'material-symbols-outlined';
+            avatarIcon.style.fontSize = '16px';
+            avatarIcon.textContent = 'psychology';
+            avatar.appendChild(avatarIcon);
+
+            const bubble = document.createElement('div');
+            bubble.className = 'chat-msg-bubble';
+            bubble.innerHTML = '<div class="typing-indicator"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>';
+
+            typingDiv.appendChild(avatar);
+            typingDiv.appendChild(bubble);
+            chatbotMessages.appendChild(typingDiv);
+            chatbotMessages.scrollTop = chatbotMessages.scrollHeight;
+        }
+
+        function removeTyping() {
+            const typing = document.getElementById('typing-indicator');
+            if (typing) typing.remove();
+        }
+
+        async function sendChatMessage() {
+            const question = chatbotInput.value.trim();
+            if (!question || isWaitingForReply) return;
+
+            // Hide suggestions after first message
+            chatbotSuggestions.style.display = 'none';
+
+            addMessage(question, 'user');
+            chatbotInput.value = '';
+            isWaitingForReply = true;
+            chatbotSend.disabled = true;
+
+            showTyping();
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question })
+                });
+
+                removeTyping();
+
+                if (response.ok) {
+                    const data = await response.json();
+                    // Format the answer - convert markdown-like formatting to HTML
+                    let formattedAnswer = data.answer
+                        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                        .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                        .replace(/\n- /g, '<br>• ')
+                        .replace(/\n\d+\. /g, function (match) { return '<br>' + match.trim() + ' '; })
+                        .replace(/\n/g, '<br>');
+                    addMessage(formattedAnswer, 'bot');
+                } else {
+                    let errorText = `Sorry, I encountered an error (HTTP ${response.status}).`;
+                    try {
+                        const errData = await response.json();
+                        if (errData && errData.answer) {
+                            errorText = errData.answer;
+                        }
+                    } catch (_) {
+                        // Ignore JSON parsing failures and keep fallback error text.
+                    }
+                    console.error('Chat API error:', response.status, response.statusText);
+                    addMessage(errorText, 'bot');
+                }
+            } catch (error) {
+                removeTyping();
+                console.error('Chat request failed:', error);
+                addMessage('Unable to connect to the server. Please make sure the app is running.', 'bot');
+            }
+
+            isWaitingForReply = false;
+            chatbotSend.disabled = false;
+            chatbotInput.focus();
+        }
+
+        function askSuggestion(btn) {
+            chatbotInput.value = btn.textContent;
+            sendChatMessage();
+        }
+
+        // Check chatbot status periodically
+        async function checkChatbotStatus() {
+            try {
+                const res = await fetch('/api/chatbot-status');
+                const data = await res.json();
+
+                if (data.initialized && data.api_key_set) {
+                    chatbotStatusDot.className = 'status-dot';
+                    chatbotStatusText.textContent = 'Ready — Ask me anything!';
+                    chatbotReady = true;
+                } else if (data.initialized && !data.api_key_set) {
+                    chatbotStatusDot.className = 'status-dot offline';
+                    chatbotStatusText.textContent = 'API key not set';
+                } else if (!data.initialized && data.error) {
+                    chatbotStatusDot.className = 'status-dot offline';
+                    chatbotStatusText.textContent = 'Setup required';
+                } else {
+                    chatbotStatusDot.className = 'status-dot loading';
+                    chatbotStatusText.textContent = 'Loading knowledge base...';
+                    // Keep checking
+                    setTimeout(checkChatbotStatus, 5000);
+                }
+            } catch (e) {
+                chatbotStatusDot.className = 'status-dot offline';
+                chatbotStatusText.textContent = 'Offline';
+            }
+        }
+
+        // Start checking status when page loads
+        document.addEventListener('DOMContentLoaded', function () {
+            setTimeout(checkChatbotStatus, 2000);
+        });
+    </script>
+</body>
+
+</html>
