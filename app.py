@@ -1,312 +1,367 @@
+
 from flask import Flask, render_template, request, jsonify
 import datetime as dt
+from datetime import timedelta
+import os
+
+import joblib
+import numpy as np
 import openmeteo_requests
 import pandas as pd
-import requests_cache
-from retry_requests import retry
-import numpy as np
-import keras
-from keras.models import load_model
-from tensorflow.keras import losses, metrics
-import joblib
-from datetime import datetime, timedelta
 import requests
-import os
+import requests_cache
 from dotenv import load_dotenv
+from retry_requests import retry
 
-# Load environment variables
+import tensorflow as tf
+from tensorflow.keras.models import load_model
+
 load_dotenv()
-
 app = Flask(__name__)
 
-# Initialize chatbot (load thesis document into memory)
 try:
     from chatbot import load_thesis, ask_thesis, get_status as chatbot_status
     load_thesis()
 except ImportError as e:
     print(f"[WARN] Chatbot module not available: {e}")
-    print("   Install dependencies: pip install python-docx python-dotenv")
     ask_thesis = None
     chatbot_status = None
 
-# Default location coordinates (Iloilo City)
+TIMEZONE = "Asia/Manila"
+
+MODEL_PATH = "LSTM_Weather_Forecast_Direct2_x7.keras"
+X_SCALER_PATH = "x_scaler_x7.pkl"
+Y_SCALER_PATH = "y_scaler_x7.pkl"
+
+MODEL_INPUT_STEPS = 7
+TARGET_HORIZON = 2
+
+TARGET_COLS_RAW = [
+    "temperature_2m_min",
+    "temperature_2m_max",
+    "rain_sum",
+    "wind_speed_10m_mean",
+    "relative_humidity_2m_mean",
+    "dew_point_2m_mean",
+    "sunshine_duration",
+]
+
+FEATURE_COLS_MODEL = [
+    "temperature_2m_min",
+    "temperature_2m_max",
+    "rain_sum_log1p",
+    "wind_speed_10m_mean",
+    "relative_humidity_2m_mean",
+    "dew_point_2m_mean",
+    "sunshine_duration",
+    "doy_sin",
+    "doy_cos",
+    "month_sin",
+    "month_cos",
+]
+
+TARGET_COLS_MODEL = [
+    "temperature_2m_min",
+    "temperature_2m_max",
+    "rain_sum_log1p",
+    "wind_speed_10m_mean",
+    "relative_humidity_2m_mean",
+    "dew_point_2m_mean",
+    "sunshine_duration",
+]
+
 DEFAULT_LOCATION = {
-    'name': 'Iloilo City',
-    'lat': 10.6969,
-    'lon': 122.5644,
-    'elevation': 8.0,
-    'admin1': 'Western Visayas',
-    'admin2': 'Iloilo',
-    'admin3': 'Iloilo City'
+    "name": "Iloilo City",
+    "lat": 10.6969,
+    "lon": 122.5644,
+    "elevation": 8.0,
+    "admin1": "Western Visayas",
+    "admin2": "Iloilo",
+    "admin3": "Iloilo City",
 }
 
-# Load the pre-trained model and scaler - CORRECTED VERSION
-try:
-    model = load_model('LSTM_Weather_Forcast_Model_12-03-2025.h5', 
-                      custom_objects={
-                          'mse': losses.MeanSquaredError(),
-                          'mae': metrics.MeanAbsoluteError(),
-                          'mean_absolute_error': metrics.MeanAbsoluteError(),
-                          'root_mean_squared_error': metrics.RootMeanSquaredError(),
-                          'r2_score': metrics.R2Score()
-                      })
-    print("[OK] Model loaded successfully with custom objects.")
-except Exception as e:
-    print(f"[ERROR] Failed to load model with custom objects: {e}")
+MONTH_NAMES = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+]
+
+@tf.keras.utils.register_keras_serializable()
+class R2Score3D(tf.keras.metrics.Metric):
+    def __init__(self, name="r2", **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.r2_metric = tf.keras.metrics.R2Score()
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        y_true_flat = tf.reshape(y_true, [-1, tf.shape(y_true)[-1]])
+        y_pred_flat = tf.reshape(y_pred, [-1, tf.shape(y_pred)[-1]])
+        self.r2_metric.update_state(y_true_flat, y_pred_flat, sample_weight=sample_weight)
+
+    def result(self):
+        return self.r2_metric.result()
+
+    def reset_state(self):
+        self.r2_metric.reset_state()
+
+
+def load_artifacts():
+    model = None
+    x_scaler = None
+    y_scaler = None
+
     try:
-        model = load_model('LSTM_Weather_Forcast_Model_12-03-2025.h5', compile=False)
-        model.compile(optimizer='adam', loss='mse')
-        print("[OK] Model loaded successfully (fallback, compiled manually).")
+        model = load_model(
+            MODEL_PATH,
+            compile=False,
+            custom_objects={"R2Score3D": R2Score3D},
+        )
+        print(f"[OK] Loaded model: {MODEL_PATH}")
+        print(f"[OK] Model input shape : {model.input_shape}")
+        print(f"[OK] Model output shape: {model.output_shape}")
     except Exception as e:
-        print(f"[ERROR] Failed to load model completely: {e}")
-        model = None
+        print(f"[ERROR] Failed to load model '{MODEL_PATH}': {e}")
 
-try:
-    scaler = joblib.load('iloilo_weather_scaler_12-03-2025.pkl')
-    print("[OK] Scaler loaded successfully.")
-except Exception as e:
-    print(f"[ERROR] Failed to load scaler: {e}")
-    scaler = None
+    try:
+        x_scaler = joblib.load(X_SCALER_PATH)
+        print(f"[OK] Loaded X scaler: {X_SCALER_PATH}")
+    except Exception as e:
+        print(f"[ERROR] Failed to load X scaler '{X_SCALER_PATH}': {e}")
 
-# Helper function to convert numpy types to native Python types
+    try:
+        y_scaler = joblib.load(Y_SCALER_PATH)
+        print(f"[OK] Loaded Y scaler: {Y_SCALER_PATH}")
+    except Exception as e:
+        print(f"[ERROR] Failed to load Y scaler '{Y_SCALER_PATH}': {e}")
+
+    return model, x_scaler, y_scaler
+
+
+model, x_scaler, y_scaler = load_artifacts()
+
+
 def convert_to_native_types(obj):
     if isinstance(obj, (np.float32, np.float64)):
         return float(obj)
-    elif isinstance(obj, (np.int32, np.int64)):
+    if isinstance(obj, (np.int32, np.int64)):
         return int(obj)
-    elif isinstance(obj, np.ndarray):
-        return [convert_to_native_types(item) for item in obj]
-    elif isinstance(obj, dict):
-        return {key: convert_to_native_types(value) for key, value in obj.items()}
-    elif isinstance(obj, list):
-        return [convert_to_native_types(item) for item in obj]
-    else:
-        return obj
+    if isinstance(obj, np.ndarray):
+        return [convert_to_native_types(x) for x in obj.tolist()]
+    if isinstance(obj, dict):
+        return {k: convert_to_native_types(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [convert_to_native_types(x) for x in obj]
+    return obj
 
-# Function to search for locations
+
+def safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def clamp_non_negative(value):
+    return float(max(0.0, safe_float(value, 0.0)))
+
+
 def search_locations(query):
     geo_url = "https://geocoding-api.open-meteo.com/v1/search"
     geo_params = {
         "name": query,
         "count": 10,
         "language": "en",
-        "countryCode": "PH"
+        "countryCode": "PH",
     }
-    
+
     try:
-        response = requests.get(geo_url, params=geo_params)
+        response = requests.get(geo_url, params=geo_params, timeout=15)
+        response.raise_for_status()
         data = response.json()
-        
-        if "results" in data:
-            # Filter for locations in Western Visayas and format the results
-            locations = []
-            for place in data["results"]:
-                if place.get("admin1", "") == "Western Visayas":
-                    location_data = {
-                        'name': place.get("name", ""),
-                        'lat': float(place.get("latitude", 0)),
-                        'lon': float(place.get("longitude", 0)),
-                        'elevation': float(place.get("elevation", 0)) if place.get("elevation") else "N/A",
-                        'admin1': place.get("admin1", ""),
-                        'admin2': place.get("admin2", ""),
-                        'admin3': place.get("admin3", "")
-                    }
-                    locations.append(location_data)
-            return locations
-        else:
-            return []
+
+        results = []
+        for place in data.get("results", []):
+            if place.get("admin1", "") == "Western Visayas":
+                results.append({
+                    "name": place.get("name", ""),
+                    "lat": float(place.get("latitude", 0)),
+                    "lon": float(place.get("longitude", 0)),
+                    "elevation": float(place.get("elevation", 0)) if place.get("elevation") is not None else "N/A",
+                    "admin1": place.get("admin1", ""),
+                    "admin2": place.get("admin2", ""),
+                    "admin3": place.get("admin3", ""),
+                })
+        return results
     except Exception as e:
-        print(f"Error searching locations: {e}")
+        print(f"[WARN] search_locations failed: {e}")
         return []
 
-# CORRECTED: Function to fetch weather data with proper preprocessing
-def fetch_weather_data(start_date, end_date, location_data=DEFAULT_LOCATION):
-    lat = location_data['lat']
-    lon = location_data['lon']
-    
-    # Setup the Open-Meteo API client with cache and retry on error
-    cache_session = requests_cache.CachedSession('.cache', expire_after=3600)
+
+def fetch_openmeteo_daily_archive(start_date, end_date, location_data):
+    cache_session = requests_cache.CachedSession(".cache", expire_after=3600)
     retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
     openmeteo = openmeteo_requests.Client(session=retry_session)
-    
-    #"https://archive-api.open-meteo.com/v1/archive"
-    #https://historical-forecast-api.open-meteo.com/v1/forecast"
-    url = "https://archive-api.open-meteo.com/v1/archive" 
+
+    url = "https://archive-api.open-meteo.com/v1/archive"
     params = {
-        "latitude": lat,
-        "longitude": lon,
+        "latitude": location_data["lat"],
+        "longitude": location_data["lon"],
         "start_date": start_date,
         "end_date": end_date,
         "daily": [
-            "temperature_2m_min", 
-            "temperature_2m_max", 
-            "rain_sum", 
+            "temperature_2m_min",
+            "temperature_2m_max",
+            "rain_sum",
             "wind_speed_10m_mean",
-            "relative_humidity_2m_mean", 
-            "dew_point_2m_mean", 
-            "sunshine_duration"
+            "relative_humidity_2m_mean",
+            "dew_point_2m_mean",
+            "sunshine_duration",
         ],
-        "timezone": "Asia/Singapore",
+        "timezone": TIMEZONE,
     }
-    
-    try:
-        responses = openmeteo.weather_api(url, params=params)
-        response = responses[0]
-        
-        # Process daily data
-        daily = response.Daily()
-        daily_temperature_2m_min = daily.Variables(0).ValuesAsNumpy()
-        daily_temperature_2m_max = daily.Variables(1).ValuesAsNumpy()
-        daily_rain_sum = daily.Variables(2).ValuesAsNumpy()
-        daily_wind_speed_10m_mean = daily.Variables(3).ValuesAsNumpy()
-        daily_relative_humidity_2m_mean = daily.Variables(4).ValuesAsNumpy()
-        daily_dew_point_2m_mean = daily.Variables(5).ValuesAsNumpy()
-        daily_sunshine_duration = daily.Variables(6).ValuesAsNumpy()
 
-        daily_data = {"date": pd.date_range(
+    responses = openmeteo.weather_api(url, params=params)
+    response = responses[0]
+    daily = response.Daily()
+
+    df = pd.DataFrame({
+        "date": pd.date_range(
             start=pd.to_datetime(daily.Time(), unit="s", utc=True),
             end=pd.to_datetime(daily.TimeEnd(), unit="s", utc=True),
             freq=pd.Timedelta(seconds=daily.Interval()),
-            inclusive="left"
-        )}
-
-        daily_data["temperature_2m_min"] = daily_temperature_2m_min
-        daily_data["temperature_2m_max"] = daily_temperature_2m_max
-        daily_data["rain_sum"] = daily_rain_sum
-        daily_data["wind_speed_10m_mean"] = daily_wind_speed_10m_mean
-        daily_data["relative_humidity_2m_mean"] = daily_relative_humidity_2m_mean
-        daily_data["dew_point_2m_mean"] = daily_dew_point_2m_mean
-        daily_data["sunshine_duration"] = daily_sunshine_duration
-
-        daily_weather_dataframe = pd.DataFrame(data=daily_data)
-        daily_weather_dataframe['date'] = pd.to_datetime(daily_weather_dataframe['date'])
-        
-        # CRITICAL: Apply same preprocessing as training
-        # Convert sunshine duration to hours (same as training)
-        daily_weather_dataframe['sunshine_duration'] = daily_weather_dataframe['sunshine_duration'] / 3600
-        daily_weather_dataframe = daily_weather_dataframe.set_index('date')
-        
-        # CRITICAL: Interpolate missing values BEFORE any processing (same as training)
-        daily_weather_dataframe['sunshine_duration'] = daily_weather_dataframe['sunshine_duration'].interpolate(method='time').bfill().ffill()
-        
-        return daily_weather_dataframe
-    
-    except Exception as e:
-        print(f"Error fetching weather data: {e}")
-        return get_sample_data(start_date, end_date)
-
-def get_sample_data(start_date, end_date):
-    # Generate sample data for the requested date range
-    date_range = pd.date_range(start=start_date, end=end_date)
-    sample_data = {
-        "date": date_range,
-        "temperature_2m_min": np.random.uniform(23, 25, len(date_range)),
-        "temperature_2m_max": np.random.uniform(28, 32, len(date_range)),
-        "rain_sum": np.random.uniform(0, 10, len(date_range)),
-        "wind_speed_10m_mean": np.random.uniform(5, 15, len(date_range)),
-        "relative_humidity_2m_mean": np.random.uniform(80, 95, len(date_range)),
-        "dew_point_2m_mean": np.random.uniform(23, 25, len(date_range)),
-        "sunshine_duration": np.random.uniform(6, 12, len(date_range))
-    }
-    
-    df = pd.DataFrame(sample_data)
-    df['date'] = pd.to_datetime(df['date'])
-    # Apply same preprocessing as training
-    df['sunshine_duration'] = df['sunshine_duration'] / 3600
-    df = df.set_index('date')
-    df['sunshine_duration'] = df['sunshine_duration'].interpolate(method='time').bfill().ffill()
+            inclusive="left",
+        ),
+        "temperature_2m_min": daily.Variables(0).ValuesAsNumpy(),
+        "temperature_2m_max": daily.Variables(1).ValuesAsNumpy(),
+        "rain_sum": daily.Variables(2).ValuesAsNumpy(),
+        "wind_speed_10m_mean": daily.Variables(3).ValuesAsNumpy(),
+        "relative_humidity_2m_mean": daily.Variables(4).ValuesAsNumpy(),
+        "dew_point_2m_mean": daily.Variables(5).ValuesAsNumpy(),
+        "sunshine_duration": daily.Variables(6).ValuesAsNumpy(),
+    })
     return df
 
-# CORRECTED: Function to prepare data for prediction
-def prepare_prediction_data(data):
-    # Data should already be preprocessed from fetch_weather_data
-    # Just normalize using the same scaler
-    
-    # Normalize data using the same scaler from training
-    if scaler is not None:
-        scaled_data = scaler.transform(data)
+
+def add_calendar_features(index: pd.DatetimeIndex) -> pd.DataFrame:
+    if index.tz is not None:
+        idx_local = index.tz_convert(TIMEZONE)
     else:
-        # Fallback normalization if scaler not available
-        try:
-            from sklearn.preprocessing import MinMaxScaler
-            fallback_scaler = MinMaxScaler(feature_range=(0, 1))
-            scaled_data = fallback_scaler.fit_transform(data)
-        except ImportError:
-            # If sklearn is not available, use simple manual normalization
-            scaled_data = data.copy()
-            for col in data.columns:
-                if data[col].max() - data[col].min() > 0:
-                    scaled_data[col] = (data[col] - data[col].min()) / (data[col].max() - data[col].min())
-                else:
-                    scaled_data[col] = 0.5
-            scaled_data = scaled_data.values
-    
-    # Use the last 7 days for prediction (same as training n_steps=7)
-    sequence = scaled_data[-7:].reshape(1, 7, 7)  # 7 days, 7 features
-    
-    return sequence
+        idx_local = index.tz_localize(TIMEZONE)
 
-# CORRECTED: Function to generate predictions (matches training output)
-def generate_predictions(sequence, days_to_predict=2):
-    predictions = []
-    
-    if model is None:
-        # Return sample predictions if model not available
-        return get_sample_predictions(days_to_predict)
-    
-    # Your model predicts ALL 7 features for the next day
-    # For multi-day prediction, we need recursive forecasting
-    current_sequence = sequence.copy()
-    
-    for _ in range(days_to_predict):
-        # Predict next day (all 7 features)
-        pred = model.predict(current_sequence, verbose=0)
-        predictions.append(pred[0])  # Get the prediction for all 7 features
-        
-        # Update sequence for next prediction: remove first day, add prediction
-        # This maintains the 7-day window for next prediction
-        current_sequence = np.append(current_sequence[:, 1:, :], 
-                                   pred.reshape(1, 1, 7), axis=1)
-    
-    # Convert predictions back to original scale
-    predictions = np.array(predictions)
-    if scaler is not None:
-        predictions = scaler.inverse_transform(predictions)
-    
-    return predictions
+    day_of_year = idx_local.dayofyear.astype(float)
+    month = idx_local.month.astype(float)
 
-def get_sample_predictions(days_to_predict):
-    predictions = []
-    for i in range(days_to_predict):
-        predictions.append([
-            24.0 + i * 0.2,  # min_temp
-            29.5 + i * 0.5,  # max_temp
-            max(0, 5.0 - i * 2.0),  # rain_sum
-            8.0 + i * 1.0,  # wind_speed
-            max(0, min(100, 85.0 - i * 2.0)),  # humidity
-            23.5 + i * 0.1,  # dew_point
-            max(0, 8.0 + i * 0.5)  # sunshine_duration (hours)
-        ])
-    return np.array(predictions)
+    cal = pd.DataFrame(index=index)
+    cal["doy_sin"] = np.sin(2 * np.pi * day_of_year / 366.0)
+    cal["doy_cos"] = np.cos(2 * np.pi * day_of_year / 366.0)
+    cal["month_sin"] = np.sin(2 * np.pi * month / 12.0)
+    cal["month_cos"] = np.cos(2 * np.pi * month / 12.0)
+    return cal
 
-# Historical weather function
+
+def preprocess_daily_weather(raw_df: pd.DataFrame) -> pd.DataFrame:
+    df = raw_df.copy()
+    df["date"] = pd.to_datetime(df["date"], utc=True)
+    df = df.sort_values("date").drop_duplicates("date")
+    df = df.set_index("date")
+
+    df["sunshine_duration"] = df["sunshine_duration"] / 3600.0
+    df["sunshine_duration"] = df["sunshine_duration"].interpolate(method="time").bfill().ffill()
+    df["rain_sum"] = df["rain_sum"].clip(lower=0)
+    df["sunshine_duration"] = df["sunshine_duration"].clip(lower=0)
+    df["rain_sum_log1p"] = np.log1p(df["rain_sum"])
+
+    cal = add_calendar_features(df.index)
+    df = pd.concat([df, cal], axis=1)
+    df = df.dropna().copy()
+    return df
+
+
+def get_sample_data(start_date, end_date):
+    rng = pd.date_range(start=start_date, end=end_date, freq="D", tz="UTC")
+    raw_df = pd.DataFrame({
+        "date": rng,
+        "temperature_2m_min": np.random.uniform(23, 25, len(rng)),
+        "temperature_2m_max": np.random.uniform(28, 32, len(rng)),
+        "rain_sum": np.random.uniform(0, 10, len(rng)),
+        "wind_speed_10m_mean": np.random.uniform(5, 15, len(rng)),
+        "relative_humidity_2m_mean": np.random.uniform(80, 95, len(rng)),
+        "dew_point_2m_mean": np.random.uniform(23, 25, len(rng)),
+        "sunshine_duration": np.random.uniform(6, 12, len(rng)) * 3600.0,
+    })
+    return preprocess_daily_weather(raw_df)
+
+
+def fetch_weather_data(start_date, end_date, location_data=DEFAULT_LOCATION):
+    try:
+        raw_df = fetch_openmeteo_daily_archive(start_date, end_date, location_data)
+        return preprocess_daily_weather(raw_df)
+    except Exception as e:
+        print(f"[WARN] fetch_weather_data fallback to sample data: {e}")
+        return get_sample_data(start_date, end_date)
+
+
+def prepare_model_input(df_model: pd.DataFrame) -> np.ndarray:
+    if len(df_model) < MODEL_INPUT_STEPS:
+        raise ValueError(f"Need at least {MODEL_INPUT_STEPS} days of data, got {len(df_model)}.")
+
+    x_values = df_model[FEATURE_COLS_MODEL].values
+    x_scaled = x_scaler.transform(x_values)
+    return x_scaled[-MODEL_INPUT_STEPS:].reshape(1, MODEL_INPUT_STEPS, len(FEATURE_COLS_MODEL))
+
+
+def inverse_target_postprocess(y_pred_target_raw: np.ndarray, target_cols_transformed):
+    out = pd.DataFrame(y_pred_target_raw, columns=target_cols_transformed)
+
+    if "rain_sum_log1p" in out.columns:
+        out["rain_sum"] = np.expm1(out["rain_sum_log1p"]).clip(lower=0)
+        out = out.drop(columns=["rain_sum_log1p"])
+
+    if "sunshine_duration" in out.columns:
+        out["sunshine_duration"] = out["sunshine_duration"].clip(lower=0)
+
+    ordered = out.reindex(columns=TARGET_COLS_RAW)
+    return ordered.values
+
+
+def inverse_targets_to_original_units(y_scaled_seq: np.ndarray) -> np.ndarray:
+    shape = y_scaled_seq.shape
+    y_flat = y_scaled_seq.reshape(-1, shape[-1])
+    y_unscaled_transformed = y_scaler.inverse_transform(y_flat)
+    y_raw = inverse_target_postprocess(y_unscaled_transformed, TARGET_COLS_MODEL)
+    return y_raw.reshape(shape[0], shape[1], len(TARGET_COLS_RAW))
+
+
+def generate_predictions(sequence: np.ndarray) -> np.ndarray:
+    if model is None or x_scaler is None or y_scaler is None:
+        raise RuntimeError("Model or scalers are not loaded.")
+
+    y_pred_scaled = model.predict(sequence, verbose=0)
+
+    if y_pred_scaled.ndim == 2 and y_pred_scaled.shape[1] == TARGET_HORIZON * len(TARGET_COLS_MODEL):
+        y_pred_scaled = y_pred_scaled.reshape(1, TARGET_HORIZON, len(TARGET_COLS_MODEL))
+
+    if y_pred_scaled.ndim != 3:
+        raise ValueError(f"Unexpected prediction shape: {y_pred_scaled.shape}")
+
+    y_pred_raw = inverse_targets_to_original_units(y_pred_scaled)
+    y_pred_raw[..., 2] = np.maximum(y_pred_raw[..., 2], 0.0)
+    return y_pred_raw[0]
+
+
 def get_historical_weather(day, month, years_range=range(2014, 2026), location_data=DEFAULT_LOCATION):
-    historical_data = []
-    
-    lat = location_data['lat']
-    lon = location_data['lon']
-    
+    historical_rows = []
+
     for year in years_range:
         try:
-            cache_session = requests_cache.CachedSession('.cache', expire_after=86400)
+            target_date = dt.date(year, month, day)
+
+            cache_session = requests_cache.CachedSession(".cache", expire_after=86400)
             retry_session = retry(cache_session, retries=3, backoff_factor=0.2)
             openmeteo = openmeteo_requests.Client(session=retry_session)
 
-            target_date = dt.date(year, month, day)
             url = "https://archive-api.open-meteo.com/v1/archive"
             params = {
-                "latitude": lat,
-                "longitude": lon,
+                "latitude": location_data["lat"],
+                "longitude": location_data["lon"],
                 "start_date": target_date.isoformat(),
                 "end_date": target_date.isoformat(),
                 "daily": [
@@ -316,322 +371,237 @@ def get_historical_weather(day, month, years_range=range(2014, 2026), location_d
                     "wind_speed_10m_mean",
                     "relative_humidity_2m_mean",
                     "dew_point_2m_mean",
-                    "sunshine_duration"
+                    "sunshine_duration",
                 ],
-                "timezone": "Asia/Singapore",
+                "timezone": TIMEZONE,
             }
-            
+
             responses = openmeteo.weather_api(url, params=params)
             response = responses[0]
             daily = response.Daily()
 
-            # Convert numpy values to native Python types
-            historical_data.append({
-                'year': int(year),
-                'temperature_2m_min': float(daily.Variables(0).ValuesAsNumpy()[0]),
-                'temperature_2m_max': float(daily.Variables(1).ValuesAsNumpy()[0]),
-                'rain_sum': float(daily.Variables(2).ValuesAsNumpy()[0]),
-                'wind_speed_10m_mean': float(daily.Variables(3).ValuesAsNumpy()[0]),
-                'relative_humidity_2m_mean': float(daily.Variables(4).ValuesAsNumpy()[0]),
-                'dew_point_2m_mean': float(daily.Variables(5).ValuesAsNumpy()[0]),
-                'sunshine_duration': float(daily.Variables(6).ValuesAsNumpy()[0])
+            historical_rows.append({
+                "year": int(year),
+                "temperature_2m_min": float(daily.Variables(0).ValuesAsNumpy()[0]),
+                "temperature_2m_max": float(daily.Variables(1).ValuesAsNumpy()[0]),
+                "rain_sum": clamp_non_negative(daily.Variables(2).ValuesAsNumpy()[0]),
+                "wind_speed_10m_mean": float(daily.Variables(3).ValuesAsNumpy()[0]),
+                "relative_humidity_2m_mean": float(daily.Variables(4).ValuesAsNumpy()[0]),
+                "dew_point_2m_mean": float(daily.Variables(5).ValuesAsNumpy()[0]),
+                "sunshine_duration": float(daily.Variables(6).ValuesAsNumpy()[0]),
             })
         except Exception as e:
-            print(f"Error fetching historical data for {year}: {e}")
-            continue
-    return pd.DataFrame(historical_data)
+            print(f"[WARN] Historical fetch failed for {year}-{month:02d}-{day:02d}: {e}")
 
-# Model verification function
-def verify_model_compatibility():
-    if model is not None:
-        print(f"[OK] Model input shape: {model.input_shape}")
-        print(f"[OK] Model output shape: {model.output_shape}")
-        print(f"[OK] Expected input: (None, 7, 7)")
-        print(f"[OK] Expected output: (None, 7)")
-        
-        # Test with dummy data
-        test_sequence = np.random.random((1, 7, 7))
-        try:
-            test_pred = model.predict(test_sequence, verbose=0)
-            print(f"[OK] Test prediction shape: {test_pred.shape}")
-            return True
-        except Exception as e:
-            print(f"[ERROR] Model test failed: {e}")
-            return False
-    return False
+    return pd.DataFrame(historical_rows)
 
-# Verify model on startup
-verify_model_compatibility()
 
-@app.route('/search_locations')
-def search_locations_route():
-    query = request.args.get('query', '')
-    if query:
-        locations = search_locations(query)
-        # Convert all numpy types to native Python types
-        locations = convert_to_native_types(locations)
-        return jsonify(locations)
-    return jsonify([])
+def build_dashboard_context(location_data, start_date=None, end_date=None):
+    if end_date is None:
+        end_date_obj = dt.date.today()
+    else:
+        end_date_obj = pd.to_datetime(end_date).date()
 
-@app.route('/')
-def index():
+    if start_date is None:
+        start_date_obj = end_date_obj - dt.timedelta(days=MODEL_INPUT_STEPS - 1)
+    else:
+        start_date_obj = pd.to_datetime(start_date).date()
+
+    weather_df = fetch_weather_data(
+        start_date_obj.strftime("%Y-%m-%d"),
+        end_date_obj.strftime("%Y-%m-%d"),
+        location_data,
+    )
+
+    if len(weather_df) < MODEL_INPUT_STEPS:
+        raise ValueError(f"Need at least {MODEL_INPUT_STEPS} days of history, got {len(weather_df)}.")
+
+    historical_data = []
+    for date_idx, row in weather_df.tail(MODEL_INPUT_STEPS).iterrows():
+        historical_data.append({
+            "date": date_idx.date().isoformat(),
+            "temperature_2m_min": float(round(row["temperature_2m_min"], 3)),
+            "temperature_2m_max": float(round(row["temperature_2m_max"], 3)),
+            "rain_sum": float(round(clamp_non_negative(row["rain_sum"]), 3)),
+            "wind_speed_10m_mean": float(round(row["wind_speed_10m_mean"], 3)),
+            "relative_humidity_2m_mean": float(round(row["relative_humidity_2m_mean"], 3)),
+            "dew_point_2m_mean": float(round(row["dew_point_2m_mean"], 3)),
+            "sunshine_duration": float(round(row["sunshine_duration"] * 3600.0, 3)),
+        })
+
     try:
-        # Auto-load: fetch past 7 days and predict next 2 days immediately
-        end_date = dt.date.today()
-        start_date = end_date - dt.timedelta(days=6)
-        days_to_predict = 2
-        location_data = DEFAULT_LOCATION
+        sequence = prepare_model_input(weather_df)
+        predictions = generate_predictions(sequence)
+    except Exception as e:
+        print(f"[WARN] Prediction failed; using fallback predictions: {e}")
+        predictions = np.array([
+            [24.0, 30.0, 0.0, 8.0, 84.0, 23.5, 8.0],
+            [24.2, 30.4, 0.0, 8.5, 83.0, 23.6, 8.5],
+        ])
 
-        # Fetch weather data for the past 7 days
-        weather_data = fetch_weather_data(
-            start_date.strftime('%Y-%m-%d'),
-            end_date.strftime('%Y-%m-%d'),
-            location_data
+    forecast_data = []
+    last_date = weather_df.index[-1].date()
+    future_dates = [last_date + timedelta(days=i + 1) for i in range(TARGET_HORIZON)]
+
+    for i in range(min(TARGET_HORIZON, len(predictions))):
+        pred = predictions[i]
+        forecast_data.append({
+            "date": future_dates[i],
+            "temperature_2m_min": float(round(pred[0], 3)),
+            "temperature_2m_max": float(round(pred[1], 3)),
+            "rain_sum": float(round(clamp_non_negative(pred[2]), 3)),
+            "wind_speed_10m_mean": float(round(pred[3], 3)),
+            "relative_humidity_2m_mean": float(round(pred[4], 3)),
+            "dew_point_2m_mean": float(round(pred[5], 3)),
+            "sunshine_duration": float(round(max(0.0, pred[6]) * 3600.0, 3)),
+        })
+
+    historical_data_list = []
+    for forecast_day in forecast_data:
+        hist_df = get_historical_weather(
+            forecast_day["date"].day,
+            forecast_day["date"].month,
+            location_data=location_data,
         )
 
-        # Format past weather for display
-        past_days = []
-        for i, (date, row) in enumerate(weather_data.iterrows()):
-            past_days.append({
-                'date': date.date(),
-                'temperature_2m_min': float(round(row['temperature_2m_min'], 3)),
-                'temperature_2m_max': float(round(row['temperature_2m_max'], 3)),
-                'rain_sum': float(round(row['rain_sum'], 3)),
-                'wind_speed_10m_mean': float(round(row['wind_speed_10m_mean'], 3)),
-                'relative_humidity_2m_mean': float(round(row['relative_humidity_2m_mean'], 3)),
-                'dew_point_2m_mean': float(round(row['dew_point_2m_mean'], 3)),
-                'sunshine_duration': float(round(row['sunshine_duration'] * 3600, 3))
-            })
-
-        # Generate predictions
-        forecast_data = []
-        if len(weather_data) >= 7:
-            sequence = prepare_prediction_data(weather_data)
-            predictions = generate_predictions(sequence, days_to_predict)
-            last_date = weather_data.index[-1]
-            future_dates = [last_date + dt.timedelta(days=i+1) for i in range(days_to_predict)]
-            for i, pred in enumerate(predictions):
-                forecast_data.append({
-                    'date': future_dates[i].date(),
-                    'temperature_2m_min': float(round(pred[0], 3)),
-                    'temperature_2m_max': float(round(pred[1], 3)),
-                    'rain_sum': float(round(pred[2], 3)),
-                    'wind_speed_10m_mean': float(round(pred[3], 3)),
-                    'relative_humidity_2m_mean': float(round(pred[4], 3)),
-                    'dew_point_2m_mean': float(round(pred[5], 3)),
-                    'sunshine_duration': float(round(pred[6] * 3600, 3))
+        rows = []
+        if not hist_df.empty:
+            for _, row in hist_df.iterrows():
+                rows.append({
+                    "year": int(row["year"]),
+                    "temperature_2m_min": float(row["temperature_2m_min"]),
+                    "temperature_2m_max": float(row["temperature_2m_max"]),
+                    "rain_sum": float(clamp_non_negative(row["rain_sum"])),
+                    "wind_speed_10m_mean": float(row["wind_speed_10m_mean"]),
+                    "relative_humidity_2m_mean": float(row["relative_humidity_2m_mean"]),
+                    "dew_point_2m_mean": float(row["dew_point_2m_mean"]),
+                    "sunshine_duration": float(row["sunshine_duration"]),
                 })
+        historical_data_list.append(rows)
 
-        # Historical comparison for forecast days
-        historical_data_list = []
-        for forecast_day in forecast_data:
-            d, m = forecast_day['date'].day, forecast_day['date'].month
-            historical_df = get_historical_weather(d, m, location_data=location_data)
-            if not historical_df.empty:
-                historical_records = []
-                for _, row in historical_df.iterrows():
-                    historical_records.append({
-                        'year': int(row['year']),
-                        'temperature_2m_min': float(row['temperature_2m_min']),
-                        'temperature_2m_max': float(row['temperature_2m_max']),
-                        'rain_sum': float(row['rain_sum']),
-                        'wind_speed_10m_mean': float(row['wind_speed_10m_mean']),
-                        'relative_humidity_2m_mean': float(row['relative_humidity_2m_mean']),
-                        'dew_point_2m_mean': float(row['dew_point_2m_mean']),
-                        'sunshine_duration': float(row['sunshine_duration'])
-                    })
-                historical_data_list.append(historical_records)
-            else:
-                historical_data_list.append([])
+    context = {
+        "historical_data": historical_data,
+        "forecast_data": forecast_data,
+        "historical_forecast_1": historical_data_list[0] if len(historical_data_list) > 0 else [],
+        "historical_forecast_2": historical_data_list[1] if len(historical_data_list) > 1 else [],
+        "month_names": MONTH_NAMES,
+        "start_date": start_date_obj.strftime("%Y-%m-%d"),
+        "end_date": end_date_obj.strftime("%Y-%m-%d"),
+        "days_to_predict": TARGET_HORIZON,
+        "selected_location": location_data,
+        "today_date": dt.date.today().strftime("%Y-%m-%d"),
+        "model_window_days": MODEL_INPUT_STEPS,
+        "forecast_strategy": "Direct multi-step (2-day output in one pass)",
+    }
+    return convert_to_native_types(context)
 
-        historical_forecast_1 = historical_data_list[0] if len(historical_data_list) > 0 else []
-        historical_forecast_2 = historical_data_list[1] if len(historical_data_list) > 1 else []
 
-        month_names = ['January', 'February', 'March', 'April', 'May', 'June',
-                      'July', 'August', 'September', 'October', 'November', 'December']
+@app.route("/search_locations")
+def search_locations_route():
+    query = request.args.get("query", "").strip()
+    if not query:
+        return jsonify([])
+    return jsonify(convert_to_native_types(search_locations(query)))
 
-        return render_template('index.html',
-                             historical_data=past_days,
-                             forecast_data=forecast_data,
-                             historical_forecast_1=historical_forecast_1,
-                             historical_forecast_2=historical_forecast_2,
-                             month_names=month_names,
-                             start_date=start_date.strftime('%Y-%m-%d'),
-                             end_date=end_date.strftime('%Y-%m-%d'),
-                             days_to_predict=days_to_predict,
-                             selected_location=location_data,
-                             today_date=end_date.strftime('%Y-%m-%d'))
+
+@app.route("/")
+def index():
+    try:
+        context = build_dashboard_context(DEFAULT_LOCATION)
+        return render_template("index.html", **context)
     except Exception as e:
-        print(f"Error in auto-load: {e}")
-        return render_template('index.html',
-                             selected_location=DEFAULT_LOCATION,
-                             today_date=dt.date.today().strftime('%Y-%m-%d'))
+        print(f"[ERROR] index route failed: {e}")
+        return render_template(
+            "index.html",
+            selected_location=DEFAULT_LOCATION,
+            today_date=dt.date.today().strftime("%Y-%m-%d"),
+            model_window_days=MODEL_INPUT_STEPS,
+            days_to_predict=TARGET_HORIZON,
+            forecast_strategy="Direct multi-step (2-day output in one pass)",
+            historical_data=[],
+            forecast_data=[],
+            historical_forecast_1=[],
+            historical_forecast_2=[],
+            month_names=MONTH_NAMES,
+            start_date=dt.date.today().strftime("%Y-%m-%d"),
+            end_date=dt.date.today().strftime("%Y-%m-%d"),
+        )
 
-@app.route('/forecast', methods=['GET', 'POST'])
+
+@app.route("/forecast", methods=["GET", "POST"])
 def forecast():
     try:
-        if request.method == 'POST':
-            # Get form data
-            start_date = request.form.get('start_date')
-            end_date = request.form.get('end_date')
-            days_to_predict = int(request.form.get('days_to_predict', 2))
-            
-            # Get location data from form
-            location_name = request.form.get('location_name', 'Iloilo City')
-            location_lat = float(request.form.get('location_lat', DEFAULT_LOCATION['lat']))
-            location_lon = float(request.form.get('location_lon', DEFAULT_LOCATION['lon']))
-            location_elevation = request.form.get('location_elevation', DEFAULT_LOCATION['elevation'])
-            
+        if request.method == "POST":
             location_data = {
-                'name': location_name,
-                'lat': location_lat,
-                'lon': location_lon,
-                'elevation': location_elevation,
-                'admin1': 'Western Visayas'
+                "name": request.form.get("location_name", DEFAULT_LOCATION["name"]),
+                "lat": safe_float(request.form.get("location_lat"), DEFAULT_LOCATION["lat"]),
+                "lon": safe_float(request.form.get("location_lon"), DEFAULT_LOCATION["lon"]),
+                "elevation": request.form.get("location_elevation", DEFAULT_LOCATION["elevation"]),
+                "admin1": request.form.get("location_admin1", DEFAULT_LOCATION["admin1"]) or DEFAULT_LOCATION["admin1"],
+                "admin2": request.form.get("location_admin2", DEFAULT_LOCATION["admin2"]) or DEFAULT_LOCATION["admin2"],
+                "admin3": request.form.get("location_admin3", DEFAULT_LOCATION["admin3"]) or DEFAULT_LOCATION["admin3"],
             }
+            start_date = request.form.get("start_date")
+            end_date = request.form.get("end_date")
         else:
-            # Get data from URL parameters
-            start_date = request.args.get('start_date')
-            end_date = request.args.get('end_date')
-            days_to_predict = int(request.args.get('days_to_predict', 2))
-            
-            # Default to past 7 days if no dates provided
-            if not start_date or not end_date:
-                end_date_default = dt.date.today()
-                start_date_default = end_date_default - dt.timedelta(days=6)
-                start_date = start_date_default.strftime('%Y-%m-%d')
-                end_date = end_date_default.strftime('%Y-%m-%d')
-            
             location_data = DEFAULT_LOCATION
-        
-        # Fetch weather data for the specified date range and location
-        weather_data = fetch_weather_data(start_date, end_date, location_data)
-        
-        # Check if we have enough data for prediction (at least 7 days)
-        if len(weather_data) < 7:
-            return f"Error: Need at least 7 days of data for prediction. Only got {len(weather_data)} days."
-        
-        # Prepare data for prediction
-        sequence = prepare_prediction_data(weather_data)
-        
-        # Generate predictions
-        predictions = generate_predictions(sequence, days_to_predict)
-        
-        # Format past weather data for display (convert to native types)
-        past_days = []
-        for i, (date, row) in enumerate(weather_data.iterrows()):
-            past_days.append({
-                'date': date.date(),
-                'temperature_2m_min': float(round(row['temperature_2m_min'], 3)),
-                'temperature_2m_max': float(round(row['temperature_2m_max'], 3)),
-                'rain_sum': float(round(row['rain_sum'], 3)),
-                'wind_speed_10m_mean': float(round(row['wind_speed_10m_mean'], 3)),
-                'relative_humidity_2m_mean': float(round(row['relative_humidity_2m_mean'], 3)),
-                'dew_point_2m_mean': float(round(row['dew_point_2m_mean'], 3)),
-                'sunshine_duration': float(round(row['sunshine_duration'] * 3600, 3))  # Convert back to seconds for display
-            })
-        
-        # Format predictions for display (convert to native types)
-        last_date = weather_data.index[-1]
-        future_dates = [last_date + dt.timedelta(days=i+1) for i in range(days_to_predict)]
-        forecast_data = []
-        for i, pred in enumerate(predictions):
-            forecast_data.append({
-                'date': future_dates[i].date(),
-                'temperature_2m_min': float(round(pred[0], 3)),
-                'temperature_2m_max': float(round(pred[1], 3)),
-                'rain_sum': float(round(pred[2], 3)),
-                'wind_speed_10m_mean': float(round(pred[3], 3)),
-                'relative_humidity_2m_mean': float(round(pred[4], 3)),
-                'dew_point_2m_mean': float(round(pred[5], 3)),
-                'sunshine_duration': float(round(pred[6] * 3600, 3))  # Convert back to seconds for display
-            })
-        
-        # Get historical context for predicted days
-        historical_data_list = []
-        for forecast_day in forecast_data:
-            d, m = forecast_day['date'].day, forecast_day['date'].month
-            historical_df = get_historical_weather(d, m, location_data=location_data)
-            if not historical_df.empty:
-                # Convert DataFrame to list of dictionaries with native types
-                historical_records = []
-                for _, row in historical_df.iterrows():
-                    historical_records.append({
-                        'year': int(row['year']),
-                        'temperature_2m_min': float(row['temperature_2m_min']),
-                        'temperature_2m_max': float(row['temperature_2m_max']),
-                        'rain_sum': float(row['rain_sum']),
-                        'wind_speed_10m_mean': float(row['wind_speed_10m_mean']),
-                        'relative_humidity_2m_mean': float(row['relative_humidity_2m_mean']),
-                        'dew_point_2m_mean': float(row['dew_point_2m_mean']),
-                        'sunshine_duration': float(row['sunshine_duration'])
-                    })
-                historical_data_list.append(historical_records)
-            else:
-                historical_data_list.append([])
+            start_date = request.args.get("start_date")
+            end_date = request.args.get("end_date")
 
-        historical_forecast_1 = historical_data_list[0] if len(historical_data_list) > 0 else []
-        historical_forecast_2 = historical_data_list[1] if len(historical_data_list) > 1 else []
-
-        month_names = ['January', 'February', 'March', 'April', 'May', 'June', 
-                      'July', 'August', 'September', 'October', 'November', 'December']
-
-        return render_template('index.html', 
-                            historical_data=past_days, 
-                            forecast_data=forecast_data,
-                            historical_forecast_1=historical_forecast_1,
-                            historical_forecast_2=historical_forecast_2,
-                            month_names=month_names,
-                            start_date=start_date,
-                            end_date=end_date,
-                            days_to_predict=days_to_predict,
-                            selected_location=location_data,
-                            today_date=dt.date.today().strftime('%Y-%m-%d'))
-                            
+        context = build_dashboard_context(location_data=location_data, start_date=start_date, end_date=end_date)
+        return render_template("index.html", **context)
     except Exception as e:
+        print(f"[ERROR] forecast route failed: {e}")
         return f"Error: {str(e)}", 500
 
-# ==========================================
-# Chatbot API Endpoints
-# ==========================================
-@app.route('/api/chat', methods=['POST'])
+
+@app.route("/api/chat", methods=["POST"])
 def chat():
-    """Handle chatbot questions about the thesis."""
     try:
         if ask_thesis is None:
             return jsonify({
                 "answer": "The chatbot module is not available. Please install the required dependencies.",
-                "sources": []
+                "sources": [],
             }), 503
 
         data = request.get_json(silent=True) or {}
-        question = str(data.get('question', '')).strip()
+        question = str(data.get("question", "")).strip()
 
         if not question:
             return jsonify({"answer": "Please ask a question.", "sources": []}), 400
 
         if len(question) > 1000:
-            return jsonify({"answer": "Your question is too long. Please keep it under 1000 characters.", "sources": []}), 400
+            return jsonify({
+                "answer": "Your question is too long. Please keep it under 1000 characters.",
+                "sources": [],
+            }), 400
 
-        app.logger.info("Chat request received (%d chars)", len(question))
         result = ask_thesis(question)
         return jsonify(result)
     except Exception:
         app.logger.exception("Unhandled error in /api/chat")
         return jsonify({
             "answer": "Server error while processing your message. Please check terminal logs.",
-            "sources": []
+            "sources": [],
         }), 500
 
 
-@app.route('/api/chatbot-status')
+@app.route("/api/chatbot-status")
 def chatbot_status_route():
-    """Check if the chatbot is ready."""
     if chatbot_status is None:
-        return jsonify({"initialized": False, "api_key_set": False, "error": "Chatbot module not installed"})
+        return jsonify({
+            "initialized": False,
+            "api_key_set": False,
+            "error": "Chatbot module not installed",
+        })
     return jsonify(chatbot_status())
 
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
-    app.run(debug=False, host='0.0.0.0', port=port)
+@app.route("/ping")
+def ping():
+    return jsonify({"status": "ok"}), 200
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(debug=False, host="0.0.0.0", port=port)

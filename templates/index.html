@@ -262,8 +262,10 @@
                 </div>
                 <div>
                     <h1 class="text-xl font-bold tracking-tight text-primary">Iloilo Weather - LSTM</h1>
-                    <p class="text-[10px] text-slate-400 ai-text">2-day LSTM forecast for {{ selected_location.name if
-                        selected_location else 'Iloilo City' }}, Philippines</p>
+                    <p class="text-[10px] text-slate-400 ai-text">Direct 2-day LSTM forecast for {{
+                        selected_location.name if
+                        selected_location else 'Iloilo City' }}, Philippines using the last {{ model_window_days if
+                        model_window_days else 7 }} days of observed weather</p>
                 </div>
             </div>
             <div class="flex-1 max-w-xl mx-auto">
@@ -342,11 +344,17 @@
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-lg font-semibold flex items-center gap-2">
                     <span class="material-symbols-outlined text-primary">event</span>
-                    Primary Forecast: Next {{ days_to_predict }} Day{{ 's' if days_to_predict > 1 else '' }}
+                    Direct Forecast: Next {{ days_to_predict }} Day{{ 's' if days_to_predict > 1 else '' }}
                 </h2>
-                <span class="text-xs bg-primary/20 text-primary px-3 py-1 rounded-full font-bold uppercase">LSTM
-                    Model</span>
+                <span class="text-xs bg-primary/20 text-primary px-3 py-1 rounded-full font-bold uppercase">Direct
+                    Multi-Step
+                    LSTM</span>
             </div>
+            <p class="text-xs text-slate-400 mb-4">
+                This forecast uses the last {{ model_window_days if model_window_days else 7 }} days as input and
+                predicts both
+                upcoming days in a single model pass.
+            </p>
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {% for day in forecast_data %}
                 <div
@@ -392,7 +400,8 @@
                                 <tr class="text-slate-200 font-medium">
                                     <td class="py-2">{{ "%.1f"|format(day.temperature_2m_min) }}° / {{
                                         "%.1f"|format(day.temperature_2m_max) }}°C</td>
-                                    <td class="py-2">{{ "%.1f"|format(day.rain_sum) }} mm</td>
+                                    <td class="py-2">{{ "%.1f"|format(day.rain_sum if day.rain_sum >= 0 else 0) }} mm
+                                    </td>
                                     <td class="py-2">{{ "%.1f"|format(day.wind_speed_10m_mean) }} km/h</td>
                                     <td class="py-2">{{ "%.0f"|format(day.relative_humidity_2m_mean) }}%</td>
                                     <td class="py-2">{{ "%.1f"|format(day.dew_point_2m_mean) }}°C</td>
@@ -412,7 +421,8 @@
         <section>
             <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
                 <span class="material-symbols-outlined text-primary">stacked_line_chart</span>
-                7-Day Temperature &amp; Weather Trends — {{ selected_location.name if selected_location else 'Iloilo
+                Last 7 Observed Days — Temperature &amp; Weather Trends for {{ selected_location.name if
+                selected_location else 'Iloilo
                 City' }}
             </h2>
             <div class="p-6 rounded-xl glass-card border border-slate-700">
@@ -457,14 +467,14 @@
                         </div>
                     </div>
                     <h3 class="text-sm font-semibold text-primary mb-2" id="graphTitle7Day">Minimum Temperature Trend
-                        (Last 7 Days)</h3>
+                        (Last 7 Observed Days)</h3>
                     <div class="relative" style="height: 300px;">
                         <canvas id="weatherTrendChart7Day"></canvas>
                     </div>
                 </div>
 
                 <div class="flex justify-end mb-4">
-                    <button onclick="downloadCSV('historical-table', '7day_weather_data.csv')"
+                    <button onclick="downloadCSV('historical-table', 'last_7_observed_days_weather_data.csv')"
                         class="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition-all">
                         <span class="material-symbols-outlined text-sm">download</span> Download CSV
                     </button>
@@ -490,7 +500,7 @@
                                 <td class="py-3 px-2 font-medium">{{ day.date }}</td>
                                 <td class="py-3 px-2">{{ "%.3f"|format(day.temperature_2m_min) }}°C</td>
                                 <td class="py-3 px-2">{{ "%.3f"|format(day.temperature_2m_max) }}°C</td>
-                                <td class="py-3 px-2">{{ "%.3f"|format(day.rain_sum) }}</td>
+                                <td class="py-3 px-2">{{ "%.3f"|format(day.rain_sum if day.rain_sum >= 0 else 0) }}</td>
                                 <td class="py-3 px-2">{{ "%.3f"|format(day.wind_speed_10m_mean) }}</td>
                                 <td class="py-3 px-2">{{ "%.3f"|format(day.relative_humidity_2m_mean) }}</td>
                                 <td class="py-3 px-2">{{ "%.3f"|format(day.dew_point_2m_mean) }}</td>
@@ -592,7 +602,8 @@
                                     <td class="py-2 px-2 font-bold">{{ year_data.year }}</td>
                                     <td class="py-2 px-2">{{ "%.1f"|format(year_data.temperature_2m_min) }}°</td>
                                     <td class="py-2 px-2">{{ "%.1f"|format(year_data.temperature_2m_max) }}°</td>
-                                    <td class="py-2 px-2">{{ "%.1f"|format(year_data.rain_sum) }}</td>
+                                    <td class="py-2 px-2">{{ "%.1f"|format(year_data.rain_sum if year_data.rain_sum >= 0
+                                        else 0) }}</td>
                                     <td class="py-2 px-2">{{ "%.1f"|format(year_data.wind_speed_10m_mean) }} km/h</td>
                                     <td class="py-2 px-2">{{ "%.0f"|format(year_data.relative_humidity_2m_mean) }}%</td>
                                     <td class="py-2 px-2">{{ "%.1f"|format(year_data.dew_point_2m_mean) }}°</td>
@@ -685,7 +696,8 @@
                                     <td class="py-2 px-2 font-bold">{{ year_data.year }}</td>
                                     <td class="py-2 px-2">{{ "%.1f"|format(year_data.temperature_2m_min) }}°</td>
                                     <td class="py-2 px-2">{{ "%.1f"|format(year_data.temperature_2m_max) }}°</td>
-                                    <td class="py-2 px-2">{{ "%.1f"|format(year_data.rain_sum) }}</td>
+                                    <td class="py-2 px-2">{{ "%.1f"|format(year_data.rain_sum if year_data.rain_sum >= 0
+                                        else 0) }}</td>
                                     <td class="py-2 px-2">{{ "%.1f"|format(year_data.wind_speed_10m_mean) }} km/h</td>
                                     <td class="py-2 px-2">{{ "%.0f"|format(year_data.relative_humidity_2m_mean) }}%</td>
                                     <td class="py-2 px-2">{{ "%.1f"|format(year_data.dew_point_2m_mean) }}°</td>
@@ -707,9 +719,10 @@
                 <div class="lg:col-span-1">
                     <h2 class="text-xl font-bold text-primary mb-4">About the Project</h2>
                     <p class="text-slate-400 leading-relaxed text-sm">
-                        Iloilo Weather - LSTM utilizes Long Short-Term Memory neural networks to provide hyper-local
-                        weather predictions. By processing decades of historical meteorological data from Iloilo City,
-                        our model identifies complex patterns that traditional physical models might miss.
+                        Iloilo Weather - LSTM uses a direct multi-step Long Short-Term Memory model to generate a 2-day
+                        localized forecast for Iloilo and nearby Western Visayas locations. The system uses the last 7
+                        observed days of weather data, applies the same preprocessing used during training, and predicts
+                        both upcoming days in a single forward pass.
                     </p>
                     <div class="mt-6 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 gap-3">
                         <div class="p-3 bg-slate-800 rounded-lg">
@@ -984,7 +997,7 @@
                 searchResults.style.display = 'none';
 
                 document.querySelector('.ai-text').textContent =
-                    `2-day LSTM forecast for ${location.name}, Philippines`;
+                    `Direct 2-day LSTM forecast for ${location.name}, Philippines using the last 7 days of observed weather`;
 
                 // Auto-submit form to reload with new location's forecast & historical data
                 document.getElementById('forecast-form').submit();
@@ -1004,7 +1017,7 @@
             const years = historicalData.map(item => item.year);
             const tempMinData = historicalData.map(item => item.temperature_2m_min);
             const tempMaxData = historicalData.map(item => item.temperature_2m_max);
-            const rainData = historicalData.map(item => item.rain_sum);
+            const rainData = historicalData.map(item => Math.max(0, item.rain_sum));
             const windSpeedData = historicalData.map(item => item.wind_speed_10m_mean);
             const humidityData = historicalData.map(item => item.relative_humidity_2m_mean);
             const dewPointData = historicalData.map(item => item.dew_point_2m_mean);
@@ -1082,7 +1095,7 @@
 
             const tempMinData = historicalData.map(item => item.temperature_2m_min);
             const tempMaxData = historicalData.map(item => item.temperature_2m_max);
-            const rainData = historicalData.map(item => item.rain_sum);
+            const rainData = historicalData.map(item => Math.max(0, item.rain_sum));
             const windSpeedData = historicalData.map(item => item.wind_speed_10m_mean);
             const humidityData = historicalData.map(item => item.relative_humidity_2m_mean);
             const dewPointData = historicalData.map(item => item.dew_point_2m_mean);
@@ -1124,7 +1137,7 @@
                     this.classList.add('active');
 
                     const titleElement = document.getElementById(titleId);
-                    titleElement.textContent = `${this.textContent.trim()} Trend (Last 7 Days)`;
+                    titleElement.textContent = `${this.textContent.trim()} Trend (Last 7 Observed Days)`;
 
                     const param = this.getAttribute('data-param');
                     let newData, newLabel, newColor;
@@ -1674,7 +1687,8 @@
                     <span class="material-symbols-outlined" style="font-size:16px">psychology</span>
                 </div>
                 <div class="chat-msg-bubble">
-                    👋 Hi! I'm your thesis assistant (Chatbot v2). I can answer questions about our research paper <strong>"Enhancing
+                    👋 Hi! I'm your thesis assistant (Chatbot v2). I can answer questions about our research paper
+                    <strong>"Enhancing
                         Localized Weather Forecasting in Iloilo Using LSTM"</strong>. Ask me anything!
                 </div>
             </div>
