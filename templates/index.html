@@ -374,6 +374,8 @@
                                 day.date.strftime('%Y-%m-%d') == today_date %} (Today){% endif %}</p>
                             <h3 class="text-6xl font-bold my-2">{{ "%.0f"|format(day.temperature_2m_max) }}°C</h3>
                         </div>
+
+                        <!--
                         <div class="flex-1 flex justify-center">
                             {% if day.rain_sum > 5 %}
                             <span class="material-symbols-outlined text-[100px] text-indigo-400">rainy</span>
@@ -383,6 +385,8 @@
                             <span class="material-symbols-outlined text-[100px] text-primary chart-glow">sunny</span>
                             {% endif %}
                         </div>
+                        -->
+
                     </div>
                     <div class="overflow-x-auto">
                         <table class="w-full text-xs text-left">
@@ -724,6 +728,7 @@
                         observed days of weather data, applies the same preprocessing used during training, and predicts
                         both upcoming days in a single forward pass.
                     </p>
+                    <!--
                     <div class="mt-6 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 gap-3">
                         <div class="p-3 bg-slate-800 rounded-lg">
                             <span class="material-symbols-outlined text-primary">memory</span>
@@ -746,6 +751,8 @@
                             <p class="text-[10px] mt-1 font-bold">MAE: </p>
                         </div>
                     </div>
+                    -->
+
                 </div>
                 <div class="lg:col-span-2">
                     <h2 class="text-xl font-bold mb-6">Meet Our Team</h2>
