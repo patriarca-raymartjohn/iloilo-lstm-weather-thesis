@@ -224,8 +224,8 @@ def fetch_openmeteo_daily_archive(start_date, end_date, location_data):
 
     df = pd.DataFrame({
         "date": pd.date_range(
-            start=pd.to_datetime(daily.Time(), unit="s", utc=True),
-            end=pd.to_datetime(daily.TimeEnd(), unit="s", utc=True),
+            start=pd.to_datetime(daily.Time() + response.UtcOffsetSeconds(), unit="s", utc=True),
+            end=pd.to_datetime(daily.TimeEnd() + response.UtcOffsetSeconds(), unit="s", utc=True),
             freq=pd.Timedelta(seconds=daily.Interval()),
             inclusive="left",
         ),
@@ -398,9 +398,9 @@ def get_historical_weather(day, month, years_range=range(2014, 2026), location_d
 
 def build_dashboard_context(location_data, start_date=None, end_date=None):
     if end_date is None:
-        end_date_obj = dt.date.today()
+        end_date_obj = dt.date.today() - dt.timedelta(days=1)
     else:
-        end_date_obj = pd.to_datetime(end_date).date()
+        end_date_obj = pd.to_datetime(end_date).date()- dt.timedelta(days=1)
 
     if start_date is None:
         start_date_obj = end_date_obj - dt.timedelta(days=MODEL_INPUT_STEPS - 1)
