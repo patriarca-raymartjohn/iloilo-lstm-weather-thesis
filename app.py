@@ -27,6 +27,12 @@ except ImportError as e:
     ask_thesis = None
     chatbot_status = None
 
+try:
+    from weather_summary import generate_weather_summary
+except ImportError as e:
+    print(f"[WARN] Weather summary module not available: {e}")
+    generate_weather_summary = None
+
 TIMEZONE = "Asia/Manila"
 
 MODEL_PATH = "LSTM_Weather_Forecast_Direct2_x7.keras"
@@ -583,6 +589,33 @@ def chat():
         return jsonify({
             "answer": "Server error while processing your message. Please check terminal logs.",
             "sources": [],
+        }), 500
+
+
+@app.route("/api/weather-summary", methods=["POST"])
+def weather_summary_route():
+    try:
+        if generate_weather_summary is None:
+            return jsonify({
+                "summary": "The AI summary feature is not available.",
+                "cached": False, "error": True,
+            }), 503
+
+        data = request.get_json(silent=True) or {}
+        location_data = data.get("location") or {}
+        seven_day = data.get("seven_day") or []
+        hist1 = data.get("historical_forecast_1") or []
+        hist2 = data.get("historical_forecast_2") or []
+        labels = data.get("labels") or {}
+
+        result = generate_weather_summary(location_data, seven_day, hist1, hist2, labels)
+        status = 200 if not result.get("error") else 200
+        return jsonify(result), status
+    except Exception:
+        app.logger.exception("Unhandled error in /api/weather-summary")
+        return jsonify({
+            "summary": "Server error while generating the summary. Please try again.",
+            "cached": False, "error": True,
         }), 500
 
 

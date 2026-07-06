@@ -51,6 +51,67 @@
             filter: drop-shadow(0 0 8px rgba(19, 127, 236, 0.4));
         }
 
+        .ai-summary-pill {
+            background: linear-gradient(135deg, #137fec 0%, #6d5efc 100%);
+            box-shadow: 0 4px 14px rgba(19, 127, 236, 0.35);
+            border: none;
+            cursor: pointer;
+        }
+
+        .ai-summary-pill:hover {
+            filter: brightness(1.08);
+            transform: translateY(-1px);
+        }
+
+        .ai-summary-pill:active {
+            transform: translateY(0);
+        }
+
+        .ai-summary-pill:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+            filter: grayscale(0.25);
+            transform: none;
+        }
+
+        .ai-summary-card {
+            border: 1px solid rgba(19, 127, 236, 0.30);
+            background: rgba(19, 127, 236, 0.06);
+        }
+
+        .ai-summary-card h3 {
+            color: #137fec;
+        }
+
+        .ai-summary-text {
+            color: #1e293b;
+        }
+
+        .dark .ai-summary-text {
+            color: #e2e8f0;
+        }
+
+        .ai-summary-badge {
+            color: #64748b;
+            border: 1px solid currentColor;
+        }
+
+        .ai-spinner {
+            width: 16px;
+            height: 16px;
+            border-radius: 9999px;
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            border-top-color: #fff;
+            animation: ai-spin 0.7s linear infinite;
+            display: inline-block;
+        }
+
+        @keyframes ai-spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
         .search-results {
             position: absolute;
             top: 100%;
@@ -521,10 +582,29 @@
         <!-- Historical Comparison (Past 10 Years) -->
         {% if forecast_data and forecast_data|length > 0 %}
         <section>
-            <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
-                <span class="material-symbols-outlined text-primary">history</span>
-                Historical Comparison — Historical Data (2025)
-            </h2>
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <h2 class="text-lg font-semibold flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary">history</span>
+                    Historical Comparison — Historical Data (2025)
+                </h2>
+                <button id="ai-summary-btn" type="button"
+                    class="ai-summary-pill inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold text-white transition-all">
+                    <span id="ai-summary-icon" class="material-symbols-outlined text-[18px]">auto_awesome</span>
+                    <span id="ai-summary-btn-label">AI Summary</span>
+                </button>
+            </div>
+
+            <!-- AI Summary output card -->
+            <div id="ai-summary-card" class="ai-summary-card hidden mb-6 rounded-xl p-4">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="material-symbols-outlined text-primary text-[20px]">auto_awesome</span>
+                    <h3 class="text-sm font-bold">AI Weather Summary</h3>
+                    <span id="ai-summary-cached"
+                        class="ai-summary-badge hidden text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded">cached</span>
+                </div>
+                <p id="ai-summary-text" class="ai-summary-text text-sm leading-relaxed"></p>
+            </div>
+
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <!-- Historical Day 1 -->
                 {% if historical_forecast_1 %}
@@ -914,6 +994,94 @@
         initialize7DayChart('weatherTrendChart7Day', 'graphTitle7Day', 'parameterSelector7Day', {{ historical_data | tojson }});
         {% endif %}
     });
+
+        // ==========================================
+        // AI Weather Summary
+        // ==========================================
+        (function () {
+            const AI_SUMMARY_DATA = {
+                seven_day: {{ historical_data | tojson if historical_data else '[]' }},
+                historical_forecast_1: {{ historical_forecast_1 | tojson if historical_forecast_1 else '[]' }},
+                historical_forecast_2: {{ historical_forecast_2 | tojson if historical_forecast_2 else '[]' }},
+                labels: {
+                    {% if forecast_data and forecast_data | length > 0 %}
+                    day1: "{{ forecast_data[0].date.day }} {{ month_names[forecast_data[0].date.month - 1] }} (Day 1)",
+                    {% endif %}
+                    {% if forecast_data and forecast_data | length > 1 %}
+                    day2: "{{ forecast_data[1].date.day }} {{ month_names[forecast_data[1].date.month - 1] }} (Day 2)",
+                    {% endif %}
+                }
+            };
+
+            document.addEventListener('DOMContentLoaded', function () {
+                const btn = document.getElementById('ai-summary-btn');
+                if (!btn) return;
+
+                const label = document.getElementById('ai-summary-btn-label');
+                const icon = document.getElementById('ai-summary-icon');
+                const card = document.getElementById('ai-summary-card');
+                const textEl = document.getElementById('ai-summary-text');
+                const cachedBadge = document.getElementById('ai-summary-cached');
+
+                // Disable when there is no recent data to summarize.
+                if (!AI_SUMMARY_DATA.seven_day || AI_SUMMARY_DATA.seven_day.length === 0) {
+                    btn.disabled = true;
+                    btn.title = 'Not enough recent data to summarize for this location.';
+                    return;
+                }
+
+                function getLocation() {
+                    const val = (id, def) => {
+                        const el = document.getElementById(id);
+                        return el ? el.value : def;
+                    };
+                    return {
+                        name: val('location-name', 'Iloilo City'),
+                        lat: parseFloat(val('location-lat', '10.6969')),
+                        lon: parseFloat(val('location-lon', '122.5644')),
+                    };
+                }
+
+                function setLoading(on) {
+                    btn.disabled = on;
+                    if (on) {
+                        icon.style.display = 'none';
+                        label.innerHTML = '<span class="ai-spinner"></span> Summarizing...';
+                    } else {
+                        icon.style.display = '';
+                        label.textContent = 'AI Summary';
+                    }
+                }
+
+                btn.addEventListener('click', async function () {
+                    setLoading(true);
+                    card.classList.remove('hidden');
+                    cachedBadge.classList.add('hidden');
+                    textEl.textContent = 'Analyzing the last 7 days and historical data...';
+
+                    try {
+                        const res = await fetch('/api/weather-summary', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                location: getLocation(),
+                                seven_day: AI_SUMMARY_DATA.seven_day,
+                                historical_forecast_1: AI_SUMMARY_DATA.historical_forecast_1,
+                                historical_forecast_2: AI_SUMMARY_DATA.historical_forecast_2,
+                                labels: AI_SUMMARY_DATA.labels,
+                            }),
+                        });
+                        const data = await res.json();
+                        textEl.textContent = data.summary || 'No summary was returned.';
+                        if (data.cached) cachedBadge.classList.remove('hidden');
+                    } catch (err) {
+                        textEl.textContent = 'Could not reach the summary service. Please check your connection and try again.';
+                    } finally {
+                        setLoading(false);
+                    }
+                });
+            });
+        })();
 
         // ==========================================
         // Location Search

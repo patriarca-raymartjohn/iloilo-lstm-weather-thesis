@@ -35,3 +35,6 @@ iloilo_weather_scaler.save
 call.txt
 call_sample.py
 app_versions/
+
+# Playwright MCP temporary snapshots/screenshots
+.playwright-mcp/
